@@ -79,6 +79,8 @@ def roboflow(workdir: str, project: str, version: int):
     version = proj.version(version)
     logging.info(f'Meta-information of version {version!r} in project {project!r}:\n{version}')
 
+    if not workdir.endswith('/'):
+        workdir = f'{workdir}/'
     logging.info(f'Deploying {workdir!r} as yolov8 ...')
     version.deploy("yolov8", workdir)
 
