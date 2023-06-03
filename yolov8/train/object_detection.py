@@ -10,7 +10,7 @@ def train_object_detection(workdir: str, train_cfg: str, level: str = 's',
 
     # Load a pretrained YOLO model (recommended for training)
     previous_pt = os.path.join(workdir, 'weights', 'last.pt')
-    if os.path.exists(previous_pt):
+    if not os.path.exists(previous_pt):
         logging.info(f'Initialize model from yolov8{level}.pt')
         model, resume = YOLO(f'yolov8{level}.pt'), True
     else:
