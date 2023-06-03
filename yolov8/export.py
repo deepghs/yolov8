@@ -19,6 +19,7 @@ _KNOWN_FILES = [
     'R_curve.png',
     'model_artifacts.json',
     'results.csv',
+    'results.png',
 ]
 
 
