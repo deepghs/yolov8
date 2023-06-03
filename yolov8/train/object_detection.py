@@ -17,8 +17,8 @@ def train_object_detection(workdir: str, train_cfg: str, level: str = 's',
     # Train the model using the 'coco128.yaml' dataset for 3 epochs
     model.train(
         data=train_cfg, epochs=max_epochs,
-        name=os.path.basename(os.path.basename(workdir)),
-        project=os.path.dirname(os.path.basename(workdir)),
+        name=os.path.basename(workdir),
+        project=os.path.dirname(workdir),
         save=True, plots=True,
         exist_ok=True, resume=resume,
         **kwargs
