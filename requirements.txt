@@ -10,5 +10,5 @@ dghs-imgutils>=0.1.0
 tensorboard
 DI-toolkit
 click>=7
-ultralytics==8.0.20
-roboflow>=1.0.0
+ultralytics==8.0.196
+roboflow>=1.0.1
