@@ -1,12 +1,12 @@
 hbutils>=0.9.1
-torch<2
+torch
 matplotlib
 pillow
 numpy
 huggingface_hub
 pandas
 typing_extensions; python_version < '3.8'
-dghs-imgutils>=0.1.0
+dghs-imgutils>=0.5.0
 tensorboard
 DI-toolkit
 click>=7
