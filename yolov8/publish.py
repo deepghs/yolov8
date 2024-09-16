@@ -38,7 +38,7 @@ def huggingface(workdir: str, name: Optional[str],
                 repository: str, revision: str):
     logging.try_init_root(logging.INFO)
 
-    hf_client = HfApi(token=os.environ['HF_ACCESS_TOKEN'])
+    hf_client = HfApi(token=os.environ['HF_TOKEN'])
     logging.info(f'Initialize repository {repository!r}')
     hf_client.create_repo(repo_id=repository, repo_type='model', exist_ok=True)
 
