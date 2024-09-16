@@ -1,16 +1,17 @@
 import os.path
+from typing import Optional
 
 from ditk import logging
 from ultralytics import YOLO
 
 
 def train_object_detection(workdir: str, train_cfg: str, level: str = 's',
-                           max_epochs: int = 200, **kwargs):
+                           max_epochs: int = 200, batch: int = -1, pretrained: Optional[str] = None, **kwargs):
     logging.try_init_root(logging.INFO)
 
     # Load a pretrained YOLO model (recommended for training)
     previous_pt = os.path.join(workdir, 'weights', 'last.pt')
-    model = YOLO(f'yolov8{level}.pt')
+    model = YOLO(pretrained or f'yolov8{level}.pt')
     resume = os.path.exists(previous_pt)
     workdir = os.path.abspath(workdir)
 
@@ -24,10 +25,14 @@ def train_object_detection(workdir: str, train_cfg: str, level: str = 's',
 
     # Train the model using the 'coco128.yaml' dataset for 3 epochs
     model.train(
-        data=train_cfg, epochs=max_epochs,
+        data=train_cfg,
+        epochs=max_epochs,
+        batch=batch,
         name=os.path.basename(workdir),
         project=os.path.dirname(workdir),
-        save=True, plots=True,
-        exist_ok=True, resume=resume,
+        save=True,
+        plots=True,
+        exist_ok=True,
+        resume=resume,
         **kwargs
     )
