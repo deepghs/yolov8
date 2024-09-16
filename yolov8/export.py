@@ -1,4 +1,6 @@
+import glob
 import os
+import re
 import shutil
 import zipfile
 from functools import partial
@@ -6,6 +8,7 @@ from typing import Optional, List, Tuple
 
 import click
 from ditk import logging
+from hbutils.encoding import sha3
 
 from .onnx import export_yolo_to_onnx
 from .utils import GLOBAL_CONTEXT_SETTINGS
@@ -13,6 +16,9 @@ from .utils import print_version as _origin_print_version
 
 _KNOWN_FILES = [
     'confusion_matrix.png',
+    'confusion_matrix_normalized.png',
+    'labels.jpg',
+    'labels_correlogram.jpg',
     'F1_curve.png',
     'P_curve.png',
     'PR_curve.png',
@@ -21,9 +27,11 @@ _KNOWN_FILES = [
     'results.csv',
     'results.png',
 ]
+_LOG_FILE_PATTERN = re.compile(r'^events\.out\.tfevents\.(?P<timestamp>\d+)\.(?P<machine>[^.]+)\.(?P<extra>[\s\S]+)$')
 
 
-def export_model_from_workdir(workdir, export_dir, name: Optional[str] = None) -> List[Tuple[str, str]]:
+def export_model_from_workdir(workdir, export_dir, name: Optional[str] = None,
+                              logfile_anonymous: bool = True) -> List[Tuple[str, str]]:
     name = name or os.path.basename(os.path.abspath(workdir))
     os.makedirs(export_dir, exist_ok=True)
 
@@ -47,6 +55,20 @@ def export_model_from_workdir(workdir, export_dir, name: Optional[str] = None) -
             logging.info(f'Copying {src!r} to {dst!r}')
             shutil.copy(src, dst)
             files.append((dst, f))
+
+    for logfile in glob.glob(os.path.join(workdir, 'events.out.tfevents.*')):
+        logging.info(f'Tensorboard file {logfile!r} found.')
+        matching = _LOG_FILE_PATTERN.fullmatch(os.path.basename(logfile))
+        assert matching, f'Log file {logfile!r}\'s name not match with pattern {_LOG_FILE_PATTERN.pattern}.'
+
+        timestamp = matching.group('timestamp')
+        machine = matching.group('machine')
+        if logfile_anonymous:
+            machine = sha3(machine.encode(), n=224)
+        extra = matching.group('extra')
+
+        final_name = f'events.out.tfevents.{timestamp}.{machine}.{extra}'
+        files.append((logfile, final_name))
 
     return files
 
