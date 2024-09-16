@@ -11,6 +11,8 @@ def train_object_detection(workdir: str, train_cfg: str, level: str = 's',
 
     # Load a pretrained YOLO model (recommended for training)
     previous_pt = os.path.join(workdir, 'weights', 'last.pt')
+    if pretrained and os.path.isdir(pretrained):
+        pretrained = os.path.join(pretrained, 'weights', 'best.pt')
     model = YOLO(pretrained or f'yolov8{level}.pt')
     resume = os.path.exists(previous_pt)
     workdir = os.path.abspath(workdir)
