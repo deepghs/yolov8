@@ -6,7 +6,7 @@ from ultralytics import YOLO
 
 
 def train_object_detection(workdir: str, train_cfg: str, level: str = 's',
-                           max_epochs: int = 200, batch: int = -1, pretrained: Optional[str] = None, **kwargs):
+                           max_epochs: int = 200, batch: int = 16, pretrained: Optional[str] = None, **kwargs):
     logging.try_init_root(logging.INFO)
 
     # Load a pretrained YOLO model (recommended for training)
