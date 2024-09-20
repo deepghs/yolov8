@@ -1,4 +1,5 @@
 import glob
+import json
 import os
 import re
 import shutil
@@ -9,6 +10,7 @@ from typing import Optional, List, Tuple
 import click
 from ditk import logging
 from hbutils.encoding import sha3
+from ultralytics import YOLO
 
 from .onnx import export_yolo_to_onnx
 from .utils import GLOBAL_CONTEXT_SETTINGS
@@ -42,6 +44,12 @@ def export_model_from_workdir(workdir, export_dir, name: Optional[str] = None,
     logging.info(f'Copying best pt {best_pt!r} to {best_pt_exp!r}')
     shutil.copy(best_pt, best_pt_exp)
     files.append((best_pt_exp, 'model.pt'))
+
+    names_map = YOLO(best_pt).names
+    labels = [names_map[i] for i in range(len(names_map))]
+    with open(os.path.join(workdir, 'labels.json'), 'w') as f:
+        json.dump(labels, f, ensure_ascii=False, indent=4)
+    files.append((os.path.join(workdir, 'labels.json'), 'labels.json'))
 
     best_onnx_exp = os.path.join(export_dir, f'{name}_model.onnx')
     logging.info(f'Export onnx model to {best_onnx_exp!r}')
