@@ -91,7 +91,7 @@ def list_(repository: str, revision: str = 'main'):
                         repo_type='model',
                         filename='README.md',
                         revision=revision,
-                )) + os.linesep * 2) as ifx:
+                )).rstrip() + os.linesep * 2) as ifx:
                     for line in ifx:
                         line = line.rstrip()
                         if line.startswith('|') and not table_printed:
