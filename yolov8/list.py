@@ -98,9 +98,9 @@ def list_(repository: str, revision: str = 'main'):
                             tb_lines.append(line)
                         else:
                             if tb_lines:
-                                df = markdown_to_df(os.linesep.join(tb_lines))
-                                if 'Model' in df.columns and 'FLOPS' in df.columns and \
-                                        'Params' in df.columns and 'Labels' in df.columns:
+                                df_c = markdown_to_df(os.linesep.join(tb_lines))
+                                if 'Model' in df_c.columns and 'FLOPS' in df_c.columns and \
+                                        'Params' in df_c.columns and 'Labels' in df_c.columns:
                                     print(df.to_markdown(index=False, numalign="center", stralign="center"), file=f)
                                     table_printed = True
                                     tb_lines.clear()
