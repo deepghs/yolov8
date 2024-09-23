@@ -104,6 +104,8 @@ def list_(repository: str, revision: str = 'main'):
                                     print(df.to_markdown(index=False, numalign="center", stralign="center"), file=f)
                                     table_printed = True
                                     tb_lines.clear()
+                                else:
+                                    print(os.linesep.join(tb_lines), file=f)
                             print(line, file=f)
 
                 if not table_printed:
