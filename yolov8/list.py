@@ -1,17 +1,19 @@
+import io
 import os.path
 
 import click
 import numpy as np
 import pandas as pd
 from ditk import logging
-from hfutils.operate import get_hf_fs, get_hf_client
+from hbutils.system import TemporaryDirectory
+from hfutils.operate import get_hf_fs, get_hf_client, upload_directory_as_directory
 from hfutils.utils import hf_fs_path, parse_hf_fs_path
 from huggingface_hub.hf_api import RepoFile
 from tqdm import tqdm
 from ultralytics import YOLO
 from ultralytics.utils.torch_utils import get_flops_with_torch_profiler, get_num_params
 
-from .utils import GLOBAL_CONTEXT_SETTINGS, float_pe
+from .utils import GLOBAL_CONTEXT_SETTINGS, float_pe, markdown_to_df
 
 
 @click.command('huggingface', context_settings={**GLOBAL_CONTEXT_SETTINGS},
@@ -70,7 +72,52 @@ def list_(repository: str, revision: str = 'main'):
     df = df.sort_values(by=['created_at'], ascending=[False])
     del df['created_at']
     df = df.replace(np.nan, 'N/A')
-    print(df.to_markdown(index=False, numalign="center", stralign="center"))
+
+    with TemporaryDirectory() as td:
+        with open(os.path.join(td, 'README.md'), 'w') as f:
+            if hf_fs.exists(hf_fs_path(
+                    repo_id=repository,
+                    repo_type='model',
+                    filename='README.md',
+                    revision=revision,
+            )):
+                print(df.to_markdown(index=False, numalign="center", stralign="center"), file=f)
+
+            else:
+                table_printed = False
+                tb_lines = []
+                with io.StringIO(hf_fs.read_text(hf_fs_path(
+                        repo_id=repository,
+                        repo_type='model',
+                        filename='README.md',
+                        revision=revision,
+                )) + os.linesep * 2) as ifx:
+                    for line in ifx:
+                        line = line.rstrip()
+                        if line.startswith('|') and not table_printed:
+                            tb_lines.append(line)
+                        else:
+                            if tb_lines:
+                                df = markdown_to_df(os.linesep.join(tb_lines))
+                                if 'Model' in df.columns and 'FLOPS' in df.columns and \
+                                        'Params' in df.columns and 'Labels' in df.columns:
+                                    print(df.to_markdown(index=False, numalign="center", stralign="center"), file=f)
+                                    table_printed = True
+                                    tb_lines.clear()
+                            print(line, file=f)
+
+                if not table_printed:
+                    print(df.to_markdown(index=False, numalign="center", stralign="center"), file=f)
+
+        upload_directory_as_directory(
+            repo_id=repository,
+            repo_type='model',
+            revision=revision,
+            path_in_repo='.',
+            local_directory=td,
+            message=f'Sync README for {repository}',
+            hf_token=os.environ.get('HF_TOKEN'),
+        )
 
 
 if __name__ == '__main__':
