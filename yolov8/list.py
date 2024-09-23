@@ -66,4 +66,4 @@ def list_(repository: str, revision: str = 'main'):
 
 
 if __name__ == '__main__':
-    pass
+    list_()
