@@ -75,7 +75,7 @@ def list_(repository: str, revision: str = 'main'):
 
     with TemporaryDirectory() as td:
         with open(os.path.join(td, 'README.md'), 'w') as f:
-            if hf_fs.exists(hf_fs_path(
+            if not hf_fs.exists(hf_fs_path(
                     repo_id=repository,
                     repo_type='model',
                     filename='README.md',
