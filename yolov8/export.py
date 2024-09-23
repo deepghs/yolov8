@@ -8,6 +8,7 @@ from functools import partial
 from typing import Optional, List, Tuple
 
 import click
+import torch
 from ditk import logging
 from hbutils.encoding import sha3
 from ultralytics import YOLO
@@ -42,7 +43,11 @@ def export_model_from_workdir(workdir, export_dir, name: Optional[str] = None,
     best_pt = os.path.join(workdir, 'weights', 'best.pt')
     best_pt_exp = os.path.join(export_dir, f'{name}_model.pt')
     logging.info(f'Copying best pt {best_pt!r} to {best_pt_exp!r}')
-    shutil.copy(best_pt, best_pt_exp)
+    state_dict = torch.load(best_pt)
+    state_dict['train_args']['data'] = sha3(state_dict['train_args']['data'].encode(), n=224)
+    state_dict['train_args']['project'] = sha3(state_dict['train_args']['project'].encode(), n=224)
+    torch.save(state_dict, best_pt_exp)
+    # shutil.copy(best_pt, best_pt_exp)
     files.append((best_pt_exp, 'model.pt'))
 
     names_map = YOLO(best_pt).names
