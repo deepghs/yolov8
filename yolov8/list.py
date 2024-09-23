@@ -52,11 +52,16 @@ def list_(repository: str, revision: str = 'main'):
 
         names_map = model.names
         labels = [names_map[i] for i in range(len(names_map))]
+        metrics = {
+            key.split('/', maxsplit=1)[-1]: value
+            for key, value in dict(model.ckpt.get('train_metrics') or {}).items()
+            if key.startswith('metrics/')
+        }
         rows.append({
             'Model': name,
             'FLOPS': float_pe(get_flops_with_torch_profiler(model)),
             'Params': float_pe(get_num_params(model.model)),
-            **(model.ckpt.get('train_metrics') or {}),
+            **metrics,
             'Labels': ', '.join(map(lambda x: f'`{x}`', labels)),
             'created_at': last_commit_at,
         })
