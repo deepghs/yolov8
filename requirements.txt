@@ -12,3 +12,4 @@ DI-toolkit
 click>=7
 ultralytics==8.0.196
 roboflow>=1.0.1
+tabulate

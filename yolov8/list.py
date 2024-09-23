@@ -1,6 +1,7 @@
 import os.path
 
 import click
+import numpy as np
 import pandas as pd
 from ditk import logging
 from hfutils.operate import get_hf_fs, get_hf_client
@@ -63,6 +64,7 @@ def list_(repository: str, revision: str = 'main'):
     df = pd.DataFrame(rows)
     df = df.sort_values(by=['created_at'], ascending=[False])
     del df['created_at']
+    df = df.replace(np.nan, 'N/A')
     print(df.to_markdown(index=False, numalign="center", stralign="center"))
 
 
