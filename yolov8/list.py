@@ -11,7 +11,7 @@ from tqdm import tqdm
 from ultralytics import YOLO
 from ultralytics.utils.torch_utils import get_flops_with_torch_profiler, get_num_params
 
-from yolov8.utils import GLOBAL_CONTEXT_SETTINGS
+from .utils import GLOBAL_CONTEXT_SETTINGS, float_pe
 
 
 @click.command('huggingface', context_settings={**GLOBAL_CONTEXT_SETTINGS},
@@ -54,8 +54,8 @@ def list_(repository: str, revision: str = 'main'):
         labels = [names_map[i] for i in range(len(names_map))]
         rows.append({
             'Model': name,
-            'FLOPS': get_flops_with_torch_profiler(model),
-            'Params': get_num_params(model.model),
+            'FLOPS': float_pe(get_flops_with_torch_profiler(model)),
+            'Params': float_pe(get_num_params(model.model)),
             **(model.ckpt.get('train_metrics') or {}),
             'Labels': ', '.join(map(lambda x: f'`{x}`', labels)),
             'created_at': last_commit_at,
