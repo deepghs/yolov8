@@ -4,7 +4,7 @@ import click
 import pandas as pd
 from ditk import logging
 from hfutils.operate import get_hf_fs, get_hf_client
-from hfutils.utils import hf_fs_path
+from hfutils.utils import hf_fs_path, parse_hf_fs_path
 from huggingface_hub.hf_api import RepoFile
 from tqdm import tqdm
 from ultralytics import YOLO
@@ -25,12 +25,13 @@ def list_(repository: str, revision: str = 'main'):
     hf_fs = get_hf_fs()
     hf_client = get_hf_client()
 
-    for pt_file in tqdm(hf_fs.glob(hf_fs_path(
+    for pt_path in tqdm(hf_fs.glob(hf_fs_path(
             repo_id=repository,
             repo_type='model',
             filename='*/model.pt',
             revision=revision,
     ))):
+        pt_file = parse_hf_fs_path(pt_path).filename
         name = os.path.dirname(pt_file)
         logging.info(f'Making information for {name!r} ...')
         model = YOLO(hf_client.hf_hub_download(
