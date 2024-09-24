@@ -165,17 +165,17 @@ def list_(repository: str, revision: str = 'main'):
         d_labels[name] = labels
         if len(labels) <= 5:
             label_text = ', '.join(map(lambda x: f'`{x}`', labels))
-
+            row['Labels'] = label_text
         else:
             label_text = ', '.join(map(lambda x: f'`{x}`', labels[:5])) + \
                          f' ... {plural_word(len(labels), "label")} in total'
-        file_url = hf_hub_repo_file_url(
-            repo_id=repository,
-            repo_type='model',
-            path=f'{name}/labels.json',
-            revision=revision,
-        )
-        row['Labels'] = f'[{label_text}]({file_url})'
+            file_url = hf_hub_repo_file_url(
+                repo_id=repository,
+                repo_type='model',
+                path=f'{name}/labels.json',
+                revision=revision,
+            )
+            row['Labels'] = f'[{label_text}]({file_url})'
         row['created_at'] = last_commit_at
         rows.append(row)
 
