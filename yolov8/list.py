@@ -1,5 +1,6 @@
 import io
 import os.path
+import re
 
 import click
 import numpy as np
@@ -9,7 +10,9 @@ from hbutils.system import TemporaryDirectory
 from hfutils.operate import get_hf_fs, get_hf_client, upload_directory_as_directory
 from hfutils.repository import hf_hub_repo_file_url
 from hfutils.utils import hf_fs_path, parse_hf_fs_path
+from huggingface_hub import hf_hub_download
 from huggingface_hub.hf_api import RepoFile
+from imgutils.ocr import ocr
 from tqdm import tqdm
 from ultralytics import YOLO
 from ultralytics.utils.torch_utils import get_flops_with_torch_profiler, get_num_params
@@ -72,6 +75,24 @@ def list_(repository: str, revision: str = 'main'):
                 filename=f'{name}/F1_curve.png',
                 revision=revision,
         )):
+            f1_plot_file = hf_hub_download(
+                repo_id=repository,
+                repo_type='model',
+                filename=f'{name}/F1_curve.png',
+                revision=revision,
+            )
+            threshold, max_f1_score = None, None
+            for _, label, _ in ocr(f1_plot_file):
+                matching = re.fullmatch(
+                    r'^\s*all\s+class(es)?\s+(?P<f1>\d+(\.\d+)?)\s+at\s+(?P<threshold>\d+(\.\d+)?)\s*$', label)
+                if matching:
+                    threshold = float(matching.group('threshold'))
+                    max_f1_score = float(matching.group('f1'))
+                    break
+            if threshold is not None:
+                row['F1 Score'] = max_f1_score
+                row['threshold'] = threshold
+
             file_url = hf_hub_repo_file_url(
                 repo_id=repository,
                 repo_type='model',
@@ -79,6 +100,7 @@ def list_(repository: str, revision: str = 'main'):
                 revision=revision,
             )
             row['F1 Plot'] = f'[plot]({file_url})'
+
         if hf_fs.exists(hf_fs_path(
                 repo_id=repository,
                 repo_type='model',
