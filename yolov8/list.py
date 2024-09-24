@@ -84,10 +84,10 @@ def list_(repository: str, revision: str = 'main'):
             threshold, max_f1_score = None, None
             for _, label, _ in ocr(f1_plot_file):
                 matching = re.fullmatch(
-                    r'^\s*all\s+class(es)?\s+(?P<f1>\d+(\.\d+)?)\s+at\s+(?P<threshold>\d+(\.\d+)?)\s*$', label)
+                    r'^\s*al{2,}\s+class(es)?\s+(?P<f1>\d+(\.+\d+)?)\s+at\s+(?P<threshold>\d+(\.+\d+)?)\s*$', label)
                 if matching:
-                    threshold = float(matching.group('threshold'))
-                    max_f1_score = float(matching.group('f1'))
+                    threshold = float(re.sub(r'\.+', '.', matching.group('threshold')))
+                    max_f1_score = float(re.sub(r'\.+', '.', matching.group('f1')))
                     break
             if threshold is not None:
                 logging.info(f'Max F1 Score: {max_f1_score:.4f}, Threshold: {threshold:.4f}')
