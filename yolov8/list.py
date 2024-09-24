@@ -78,7 +78,7 @@ def list_(repository: str, revision: str = 'main'):
                 path=f'{name}/F1_curve.png',
                 revision=revision,
             )
-            row['F1 Plot'] = f'![plot]({file_url})'
+            row['F1 Plot'] = f'[plot]({file_url})'
         if hf_fs.exists(hf_fs_path(
                 repo_id=repository,
                 repo_type='model',
@@ -91,7 +91,7 @@ def list_(repository: str, revision: str = 'main'):
                 path=f'{name}/confusion_matrix_normalized.png',
                 revision=revision,
             )
-            row['Confusion'] = f'![confusion]({file_url})'
+            row['Confusion'] = f'[confusion]({file_url})'
         elif hf_fs.exists(hf_fs_path(
                 repo_id=repository,
                 repo_type='model',
@@ -104,7 +104,7 @@ def list_(repository: str, revision: str = 'main'):
                 path=f'{name}/confusion_matrix.png',
                 revision=revision,
             )
-            row['Confusion'] = f'![confusion]({file_url})'
+            row['Confusion'] = f'[confusion]({file_url})'
         row['Labels'] = ', '.join(map(lambda x: f'`{x}`', labels))
         row['created_at'] = last_commit_at
         rows.append(row)
