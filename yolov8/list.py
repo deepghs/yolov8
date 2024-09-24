@@ -1,4 +1,5 @@
 import io
+import json
 import os.path
 import re
 
@@ -6,6 +7,7 @@ import click
 import numpy as np
 import pandas as pd
 from ditk import logging
+from hbutils.string import plural_word
 from hbutils.system import TemporaryDirectory
 from hfutils.operate import get_hf_fs, get_hf_client, upload_directory_as_directory
 from hfutils.repository import hf_hub_repo_file_url
@@ -32,6 +34,7 @@ def list_(repository: str, revision: str = 'main'):
     hf_fs = get_hf_fs()
     hf_client = get_hf_client()
 
+    d_labels = {}
     for pt_path in tqdm(hf_fs.glob(hf_fs_path(
             repo_id=repository,
             repo_type='model',
@@ -82,8 +85,8 @@ def list_(repository: str, revision: str = 'main'):
             )
             threshold, max_f1_score = None, None
             for _, label, _ in ocr(f1_plot_file):
-                matching = re.fullmatch(
-                    r'^\s*al{2,}\s+class(es)?\s+(?P<f1>\d+(\.+\d+)?)\s+at\s+(?P<threshold>\d+(\.+\d+)?)\s*$', label)
+                matching = re.fullmatch(r'^\s*a+l{2,}\s+c+l+a+s+s+(e+s+)?\s+(?P<f1>\d+(\.+\d+)?)\s+'
+                                        r'a+t+\s+(?P<threshold>\d+(\.+\d+)?)\s*$', label)
                 if matching:
                     threshold = float(re.sub(r'\.+', '.', matching.group('threshold')))
                     max_f1_score = float(re.sub(r'\.+', '.', matching.group('f1')))
@@ -139,7 +142,20 @@ def list_(repository: str, revision: str = 'main'):
             row['Confusion'] = f'[confusion]({file_url})'
         else:
             logging.warning(f'No confusion matrix found for {name!r}.')
-        row['Labels'] = ', '.join(map(lambda x: f'`{x}`', labels))
+        d_labels[name] = labels
+        if len(labels) <= 5:
+            label_text = ', '.join(map(lambda x: f'`{x}`', labels))
+
+        else:
+            label_text = ', '.join(map(lambda x: f'`{x}`', labels[:5])) + \
+                         f' ... {plural_word(len(labels), "label")} in total'
+        file_url = hf_hub_repo_file_url(
+            repo_id=repository,
+            repo_type='model',
+            path=f'{name}/labels.json',
+            revision=revision,
+        )
+        row['Labels'] = f'[{label_text}]({file_url})'
         row['created_at'] = last_commit_at
         rows.append(row)
 
@@ -149,6 +165,10 @@ def list_(repository: str, revision: str = 'main'):
     df = df.replace(np.nan, 'N/A')
 
     with TemporaryDirectory() as td:
+        for name, labels in d_labels.items():
+            with open(os.path.join(td, name, 'labels.json'), 'w') as f:
+                json.dump(labels, f, ensure_ascii=False, indent=4)
+
         with open(os.path.join(td, 'README.md'), 'w') as f:
             if not hf_fs.exists(hf_fs_path(
                     repo_id=repository,
