@@ -35,6 +35,7 @@ def list_(repository: str, revision: str = 'main'):
     hf_client = get_hf_client()
 
     d_labels = {}
+    d_thresholds = {}
     for pt_path in tqdm(hf_fs.glob(hf_fs_path(
             repo_id=repository,
             repo_type='model',
@@ -95,6 +96,7 @@ def list_(repository: str, revision: str = 'main'):
                 logging.info(f'Max F1 Score: {max_f1_score:.4f}, Threshold: {threshold:.4f}')
                 row['F1 Score'] = max_f1_score
                 row['Threshold'] = threshold
+                d_thresholds[name] = (max_f1_score, threshold)
             else:
                 logging.warning('No F1 score or threshold detected in F1 plot image.')
         row = {**row, **metrics}
@@ -169,6 +171,13 @@ def list_(repository: str, revision: str = 'main'):
             os.makedirs(os.path.join(td, name), exist_ok=True)
             with open(os.path.join(td, name, 'labels.json'), 'w') as f:
                 json.dump(labels, f, ensure_ascii=False, indent=4)
+        for name, (max_f1_score, threshold) in d_thresholds.items():
+            os.makedirs(os.path.join(td, name), exist_ok=True)
+            with open(os.path.join(td, name, 'threshold.json'), 'w') as f:
+                json.dump({
+                    'f1_score': max_f1_score,
+                    'threshold': threshold,
+                }, f, ensure_ascii=False, indent=4)
 
         with open(os.path.join(td, 'README.md'), 'w') as f:
             if not hf_fs.exists(hf_fs_path(
