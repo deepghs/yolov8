@@ -166,6 +166,7 @@ def list_(repository: str, revision: str = 'main'):
 
     with TemporaryDirectory() as td:
         for name, labels in d_labels.items():
+            os.makedirs(os.path.join(td, name), exist_ok=True)
             with open(os.path.join(td, name, 'labels.json'), 'w') as f:
                 json.dump(labels, f, ensure_ascii=False, indent=4)
 
