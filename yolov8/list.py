@@ -75,6 +75,24 @@ def list_(repository: str, revision: str = 'main'):
         if hf_fs.exists(hf_fs_path(
                 repo_id=repository,
                 repo_type='model',
+                filename=f'{name}/threshold.json',
+                revision=revision,
+        )):
+            th_info = json.loads(hf_fs.read_text(hf_fs_path(
+                repo_id=repository,
+                repo_type='model',
+                filename=f'{name}/threshold.json',
+                revision=revision,
+            )))
+            max_f1_score = th_info['f1_score']
+            threshold = th_info['threshold']
+            logging.info(f'Max F1 Score: {max_f1_score:.4f}, Threshold: {threshold:.4f}')
+            row['F1 Score'] = max_f1_score
+            row['Threshold'] = threshold
+            d_thresholds[name] = (max_f1_score, threshold)
+        elif hf_fs.exists(hf_fs_path(
+                repo_id=repository,
+                repo_type='model',
                 filename=f'{name}/F1_curve.png',
                 revision=revision,
         )):
