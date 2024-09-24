@@ -67,7 +67,6 @@ def list_(repository: str, revision: str = 'main'):
             'Model': name,
             'FLOPS': float_pe(get_flops_with_torch_profiler(model)),
             'Params': float_pe(get_num_params(model.model)),
-            **metrics,
         }
         if hf_fs.exists(hf_fs_path(
                 repo_id=repository,
@@ -92,10 +91,16 @@ def list_(repository: str, revision: str = 'main'):
             if threshold is not None:
                 logging.info(f'Max F1 Score: {max_f1_score:.4f}, Threshold: {threshold:.4f}')
                 row['F1 Score'] = max_f1_score
-                row['threshold'] = threshold
+                row['Threshold'] = threshold
             else:
                 logging.warning('No F1 score or threshold detected in F1 plot image.')
-
+        row = {**row, **metrics}
+        if hf_fs.exists(hf_fs_path(
+                repo_id=repository,
+                repo_type='model',
+                filename=f'{name}/F1_curve.png',
+                revision=revision,
+        )):
             file_url = hf_hub_repo_file_url(
                 repo_id=repository,
                 repo_type='model',
