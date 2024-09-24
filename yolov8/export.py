@@ -14,7 +14,7 @@ from hbutils.encoding import sha3
 from ultralytics import YOLO
 
 from .onnx import export_yolo_to_onnx
-from .utils import GLOBAL_CONTEXT_SETTINGS
+from .utils import GLOBAL_CONTEXT_SETTINGS, get_f1_and_threshold_from_image
 from .utils import print_version as _origin_print_version
 
 _KNOWN_FILES = [
@@ -57,6 +57,15 @@ def export_model_from_workdir(workdir, export_dir, name: Optional[str] = None,
     with open(os.path.join(workdir, 'labels.json'), 'w') as f:
         json.dump(labels, f, ensure_ascii=False, indent=4)
     files.append((os.path.join(workdir, 'labels.json'), 'labels.json'))
+
+    if os.path.exists(os.path.join(workdir, 'F1_curve.png')):
+        threshold, max_f1_score = get_f1_and_threshold_from_image(os.path.join(workdir, 'F1_curve.png'))
+        with open(os.path.join(workdir, 'threshold.json'), 'w') as f:
+            json.dump({
+                'f1_score': max_f1_score,
+                'threshold': threshold,
+            }, f, ensure_ascii=False, indent=4)
+        files.append((os.path.join(workdir, 'threshold.json'), 'threshold.json'))
 
     best_onnx_exp = os.path.join(export_dir, f'{name}_model.onnx')
     logging.info(f'Export onnx model to {best_onnx_exp!r}')

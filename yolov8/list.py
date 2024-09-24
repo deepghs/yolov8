@@ -1,7 +1,6 @@
 import io
 import json
 import os.path
-import re
 
 import click
 import numpy as np
@@ -14,12 +13,11 @@ from hfutils.repository import hf_hub_repo_file_url
 from hfutils.utils import hf_fs_path, parse_hf_fs_path
 from huggingface_hub import hf_hub_download
 from huggingface_hub.hf_api import RepoFile
-from imgutils.ocr import ocr
 from tqdm import tqdm
 from ultralytics import YOLO
 from ultralytics.utils.torch_utils import get_flops_with_torch_profiler, get_num_params
 
-from .utils import GLOBAL_CONTEXT_SETTINGS, float_pe, markdown_to_df
+from .utils import GLOBAL_CONTEXT_SETTINGS, float_pe, markdown_to_df, get_f1_and_threshold_from_image
 
 
 @click.command('huggingface', context_settings={**GLOBAL_CONTEXT_SETTINGS},
@@ -96,20 +94,12 @@ def list_(repository: str, revision: str = 'main'):
                 filename=f'{name}/F1_curve.png',
                 revision=revision,
         )):
-            f1_plot_file = hf_hub_download(
+            threshold, max_f1_score = get_f1_and_threshold_from_image(hf_hub_download(
                 repo_id=repository,
                 repo_type='model',
                 filename=f'{name}/F1_curve.png',
                 revision=revision,
-            )
-            threshold, max_f1_score = None, None
-            for _, label, _ in ocr(f1_plot_file):
-                matching = re.fullmatch(r'^\s*a+l{2,}\s+c+l+a+s+s+(e+s+)?\s+(?P<f1>\d+(\.+\d+)?)\s+'
-                                        r'a+t+\s+(?P<threshold>\d+(\.+\d+)?)\s*$', label)
-                if matching:
-                    threshold = float(re.sub(r'\.+', '.', matching.group('threshold')))
-                    max_f1_score = float(re.sub(r'\.+', '.', matching.group('f1')))
-                    break
+            ))
             if threshold is not None:
                 logging.info(f'Max F1 Score: {max_f1_score:.4f}, Threshold: {threshold:.4f}')
                 row['F1 Score'] = max_f1_score
