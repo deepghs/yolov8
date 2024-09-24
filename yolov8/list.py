@@ -90,6 +90,7 @@ def list_(repository: str, revision: str = 'main'):
                     max_f1_score = float(matching.group('f1'))
                     break
             if threshold is not None:
+                logging.info(f'Max F1 Score: {max_f1_score:.4f}, Threshold: {threshold:.4f}')
                 row['F1 Score'] = max_f1_score
                 row['threshold'] = threshold
 
@@ -100,6 +101,8 @@ def list_(repository: str, revision: str = 'main'):
                 revision=revision,
             )
             row['F1 Plot'] = f'[plot]({file_url})'
+        else:
+            logging.warning(f'No F1 plot image found for {name!r}.')
 
         if hf_fs.exists(hf_fs_path(
                 repo_id=repository,
@@ -127,6 +130,8 @@ def list_(repository: str, revision: str = 'main'):
                 revision=revision,
             )
             row['Confusion'] = f'[confusion]({file_url})'
+        else:
+            logging.warning(f'No confusion matrix found for {name!r}.')
         row['Labels'] = ', '.join(map(lambda x: f'`{x}`', labels))
         row['created_at'] = last_commit_at
         rows.append(row)
