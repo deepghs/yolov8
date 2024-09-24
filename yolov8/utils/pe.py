@@ -1,9 +1,9 @@
 def float_pe(v: float, gnum: int = 3) -> str:
     texts = [
         f'{v:.{gnum}g}',
-        f'{v / 1e3:.{gnum}g} k',
-        f'{v / 1e6:.{gnum}g} M',
-        f'{v / 1e9:.{gnum}g} G',
+        f'{v / 1e3:.{gnum}g}k',
+        f'{v / 1e6:.{gnum}g}M',
+        f'{v / 1e9:.{gnum}g}G',
     ]
 
     best_text = None

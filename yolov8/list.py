@@ -7,6 +7,7 @@ import pandas as pd
 from ditk import logging
 from hbutils.system import TemporaryDirectory
 from hfutils.operate import get_hf_fs, get_hf_client, upload_directory_as_directory
+from hfutils.repository import hf_hub_repo_file_url
 from hfutils.utils import hf_fs_path, parse_hf_fs_path
 from huggingface_hub.hf_api import RepoFile
 from tqdm import tqdm
@@ -59,14 +60,54 @@ def list_(repository: str, revision: str = 'main'):
             for key, value in dict(model.ckpt.get('train_metrics') or {}).items()
             if key.startswith('metrics/')
         }
-        rows.append({
+        row = {
             'Model': name,
             'FLOPS': float_pe(get_flops_with_torch_profiler(model)),
             'Params': float_pe(get_num_params(model.model)),
             **metrics,
-            'Labels': ', '.join(map(lambda x: f'`{x}`', labels)),
-            'created_at': last_commit_at,
-        })
+        }
+        if hf_fs.exists(hf_fs_path(
+                repo_id=repository,
+                repo_type='model',
+                filename=f'{name}/F1_curve.png',
+                revision=revision,
+        )):
+            file_url = hf_hub_repo_file_url(
+                repo_id=repository,
+                repo_type='model',
+                path=f'{name}/F1_curve.png',
+                revision=revision,
+            )
+            row['F1 Plot'] = f'![plot]({file_url})'
+        if hf_fs.exists(hf_fs_path(
+                repo_id=repository,
+                repo_type='model',
+                filename=f'{name}/confusion_matrix_normalized.png',
+                revision=revision,
+        )):
+            file_url = hf_hub_repo_file_url(
+                repo_id=repository,
+                repo_type='model',
+                path=f'{name}/confusion_matrix_normalized.png',
+                revision=revision,
+            )
+            row['Confusion'] = f'![confusion]({file_url})'
+        elif hf_fs.exists(hf_fs_path(
+                repo_id=repository,
+                repo_type='model',
+                filename=f'{name}/confusion_matrix.png',
+                revision=revision,
+        )):
+            file_url = hf_hub_repo_file_url(
+                repo_id=repository,
+                repo_type='model',
+                path=f'{name}/confusion_matrix.png',
+                revision=revision,
+            )
+            row['Confusion'] = f'![confusion]({file_url})'
+        row['Labels'] = ', '.join(map(lambda x: f'`{x}`', labels))
+        row['created_at'] = last_commit_at
+        rows.append(row)
 
     df = pd.DataFrame(rows)
     df = df.sort_values(by=['created_at'], ascending=[False])
