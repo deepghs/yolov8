@@ -93,6 +93,8 @@ def list_(repository: str, revision: str = 'main'):
                 logging.info(f'Max F1 Score: {max_f1_score:.4f}, Threshold: {threshold:.4f}')
                 row['F1 Score'] = max_f1_score
                 row['threshold'] = threshold
+            else:
+                logging.warning('No F1 score or threshold detected in F1 plot image.')
 
             file_url = hf_hub_repo_file_url(
                 repo_id=repository,
