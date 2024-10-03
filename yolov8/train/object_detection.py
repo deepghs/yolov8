@@ -5,7 +5,7 @@ from ditk import logging
 from ultralytics import YOLO
 
 
-def train_object_detection(workdir: str, train_cfg: str, level: str = 's',
+def train_object_detection(workdir: str, train_cfg: str, level: str = 's', yversion: int = 8,
                            max_epochs: int = 200, batch: int = 16, pretrained: Optional[str] = None, **kwargs):
     logging.try_init_root(logging.INFO)
 
@@ -13,7 +13,7 @@ def train_object_detection(workdir: str, train_cfg: str, level: str = 's',
     previous_pt = os.path.join(workdir, 'weights', 'last.pt')
     if pretrained and os.path.isdir(pretrained):
         pretrained = os.path.join(pretrained, 'weights', 'best.pt')
-    model = YOLO(pretrained or f'yolov8{level}.pt')
+    model = YOLO(pretrained or f'yolov{yversion}{level}.pt')
     resume = os.path.exists(previous_pt)
     workdir = os.path.abspath(workdir)
 
