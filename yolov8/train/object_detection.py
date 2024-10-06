@@ -1,11 +1,11 @@
 import os.path
-from typing import Optional
+from typing import Optional, Union
 
 from ditk import logging
 from ultralytics import YOLO
 
 
-def train_object_detection(workdir: str, train_cfg: str, level: str = 's', yversion: int = 8,
+def train_object_detection(workdir: str, train_cfg: str, level: str = 's', yversion: Union[int, str] = 8,
                            max_epochs: int = 200, batch: int = 16, pretrained: Optional[str] = None, **kwargs):
     logging.try_init_root(logging.INFO)
 
@@ -13,7 +13,12 @@ def train_object_detection(workdir: str, train_cfg: str, level: str = 's', yvers
     previous_pt = os.path.join(workdir, 'weights', 'last.pt')
     if pretrained and os.path.isdir(pretrained):
         pretrained = os.path.join(pretrained, 'weights', 'best.pt')
-    model = YOLO(pretrained or f'yolov{yversion}{level}.pt')
+    if yversion == 11 or yversion == '11':
+        model = YOLO(pretrained or f'yolo11{level}.pt')
+    elif isinstance(yversion, str) and yversion.lower() == 'rtdetr':
+        model = YOLO(f'rtdetr-{level}.pt')
+    else:
+        model = YOLO(pretrained or f'yolov{yversion}{level}.pt')
     resume = os.path.exists(previous_pt)
     workdir = os.path.abspath(workdir)
 
