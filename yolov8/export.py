@@ -11,7 +11,7 @@ import click
 import torch
 from ditk import logging
 from hbutils.encoding import sha3
-from ultralytics import YOLO
+from ultralytics import YOLO, RTDETR
 
 from .onnx import export_yolo_to_onnx
 from .utils import GLOBAL_CONTEXT_SETTINGS, get_f1_and_threshold_from_image
@@ -52,11 +52,21 @@ def export_model_from_workdir(workdir, export_dir, name: Optional[str] = None,
     # shutil.copy(best_pt, best_pt_exp)
     files.append((best_pt_exp, 'model.pt'))
 
-    names_map = YOLO(best_pt).names
+    model_type = 'yolo'
+    if os.path.exists(os.path.join(workdir, 'model_type.json')):
+        with open(os.path.join(workdir, 'model_type.json'), 'r') as f:
+            model_type = json.load(f)['model_type']
+    if model_type == 'yolo':
+        names_map = YOLO(best_pt).names
+    else:
+        names_map = RTDETR(best_pt).names
     labels = [names_map[i] for i in range(len(names_map))]
     with open(os.path.join(workdir, 'labels.json'), 'w') as f:
         json.dump(labels, f, ensure_ascii=False, indent=4)
     files.append((os.path.join(workdir, 'labels.json'), 'labels.json'))
+    with open(os.path.join(workdir, 'model_type.json'), 'w') as f:
+        json.dump({'model_type': model_type}, f, ensure_ascii=False, indent=4)
+    files.append((os.path.join(workdir, 'model_type.json'), 'model_type.json'))
 
     if os.path.exists(os.path.join(workdir, 'F1_curve.png')):
         threshold, max_f1_score = get_f1_and_threshold_from_image(os.path.join(workdir, 'F1_curve.png'))
