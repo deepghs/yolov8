@@ -14,7 +14,7 @@ from hfutils.utils import hf_fs_path, parse_hf_fs_path
 from huggingface_hub import hf_hub_download
 from huggingface_hub.hf_api import RepoFile
 from tqdm import tqdm
-from ultralytics import YOLO
+from ultralytics import YOLO, RTDETR
 from ultralytics.utils.torch_utils import get_flops_with_torch_profiler, get_num_params
 
 from .utils import GLOBAL_CONTEXT_SETTINGS, float_pe, markdown_to_df, get_f1_and_threshold_from_image
@@ -34,6 +34,7 @@ def list_(repository: str, revision: str = 'main'):
 
     d_labels = {}
     d_thresholds = {}
+    d_model_types = {}
     for pt_path in tqdm(hf_fs.glob(hf_fs_path(
             repo_id=repository,
             repo_type='model',
@@ -42,8 +43,19 @@ def list_(repository: str, revision: str = 'main'):
     ))):
         pt_file = parse_hf_fs_path(pt_path).filename
         name = os.path.dirname(pt_file)
+
+        if hf_fs.exists(f'{repository}/{name}/model_type.json'):
+            model_type = json.loads(hf_fs.read_text(f'{repository}/{name}/model_type.json'))['model_type']
+        else:
+            model_type = 'yolo'
+        d_model_types[name] = model_type
+        if model_type == 'yolo':
+            model_cls = YOLO
+        else:
+            model_cls = RTDETR
+
         logging.info(f'Making information for {name!r} ...')
-        model = YOLO(hf_client.hf_hub_download(
+        model = model_cls(hf_client.hf_hub_download(
             repo_id=repository,
             repo_type='model',
             filename=pt_file,
@@ -67,6 +79,7 @@ def list_(repository: str, revision: str = 'main'):
         }
         row = {
             'Model': name,
+            'Type': model_type,
             'FLOPS': float_pe(get_flops_with_torch_profiler(model)),
             'Params': float_pe(get_num_params(model.model)),
         }
@@ -186,6 +199,10 @@ def list_(repository: str, revision: str = 'main'):
                     'f1_score': max_f1_score,
                     'threshold': threshold,
                 }, f, ensure_ascii=False, indent=4)
+        for name, model_type in d_model_types.items():
+            os.makedirs(os.path.join(td, name), exist_ok=True)
+            with open(os.path.join(td, name, 'model_type.json'), 'w') as f:
+                json.dump({'model_type': model_type}, f, ensure_ascii=False, indent=4)
 
         with open(os.path.join(td, 'README.md'), 'w') as f:
             if not hf_fs.exists(hf_fs_path(
