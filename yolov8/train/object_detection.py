@@ -1,8 +1,9 @@
+import json
 import os.path
 from typing import Optional, Union
 
 from ditk import logging
-from ultralytics import YOLO
+from ultralytics import YOLO, RTDETR
 
 
 def train_object_detection(workdir: str, train_cfg: str, level: str = 's', yversion: Union[int, str] = 8,
@@ -15,12 +16,20 @@ def train_object_detection(workdir: str, train_cfg: str, level: str = 's', yvers
         pretrained = os.path.join(pretrained, 'weights', 'best.pt')
     if yversion == 11 or yversion == '11':
         model = YOLO(pretrained or f'yolo11{level}.pt')
+        model_type = 'yolo'
     elif isinstance(yversion, str) and yversion.lower() == 'rtdetr':
-        model = YOLO(f'rtdetr-{level}.pt')
+        model = RTDETR(pretrained or f'rtdetr-{level}.pt')
+        model_type = 'rtdetr'
     else:
         model = YOLO(pretrained or f'yolov{yversion}{level}.pt')
+        model_type = 'yolo'
     resume = os.path.exists(previous_pt)
     workdir = os.path.abspath(workdir)
+    os.makedirs(workdir, exist_ok=True)
+    with open(os.path.join(workdir, 'model_type.json'), 'w') as f:
+        json.dump({
+            'model_type': model_type,
+        }, f)
 
     if os.path.isdir(train_cfg):
         if os.path.exists(os.path.join(train_cfg, 'data.yaml')):
