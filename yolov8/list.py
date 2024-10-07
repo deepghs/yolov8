@@ -80,7 +80,7 @@ def list_(repository: str, revision: str = 'main'):
         row = {
             'Model': name,
             'Type': model_type,
-            'FLOPS': float_pe(get_flops_with_torch_profiler(model)),
+            'GFLOPS': float_pe(get_flops_with_torch_profiler(model)),
             'Params': float_pe(get_num_params(model.model)),
         }
         if hf_fs.exists(hf_fs_path(
