@@ -15,7 +15,7 @@ from huggingface_hub import hf_hub_download
 from huggingface_hub.hf_api import RepoFile
 from tqdm import tqdm
 from ultralytics import YOLO, RTDETR
-from ultralytics.utils.torch_utils import get_flops_with_torch_profiler, get_num_params
+from ultralytics.utils.torch_utils import get_num_params, get_flops
 
 from .utils import GLOBAL_CONTEXT_SETTINGS, float_pe, markdown_to_df, get_f1_and_threshold_from_image
 
@@ -80,7 +80,7 @@ def list_(repository: str, revision: str = 'main'):
         row = {
             'Model': name,
             'Type': model_type,
-            'GFLOPS': float_pe(get_flops_with_torch_profiler(model)),
+            'FLOPS': float_pe(get_flops(model.model) * 1e9),
             'Params': float_pe(get_num_params(model.model)),
         }
         if hf_fs.exists(hf_fs_path(
