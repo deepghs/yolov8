@@ -34,8 +34,10 @@ def cli():
               help='Repository for publishing model.', show_default=True)
 @click.option('--revision', '-R', 'revision', type=str, default='main',
               help='Revision for pushing the model.', show_default=True)
+@click.option('--opset_version', 'opset_version', type=int, default=14,
+              help='Version of OP set.', show_default=True)
 def huggingface(workdir: str, name: Optional[str],
-                repository: str, revision: str):
+                repository: str, revision: str, opset_version: int = 14):
     logging.try_init_root(logging.INFO)
 
     hf_client = HfApi(token=os.environ['HF_TOKEN'])
@@ -44,7 +46,7 @@ def huggingface(workdir: str, name: Optional[str],
 
     with TemporaryDirectory() as td:
         name = name or os.path.basename(os.path.abspath(workdir))
-        files = export_model_from_workdir(workdir, td, name)
+        files = export_model_from_workdir(workdir, td, name, opset_version=opset_version)
         current_time = datetime.datetime.now().astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')
         commit_message = f"Publish model {name}, on {current_time}"
         logging.info(f'Publishing model {name!r} to repository {repository!r} ...')

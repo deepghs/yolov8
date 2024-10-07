@@ -34,7 +34,7 @@ _LOG_FILE_PATTERN = re.compile(r'^events\.out\.tfevents\.(?P<timestamp>\d+)\.(?P
 
 
 def export_model_from_workdir(workdir, export_dir, name: Optional[str] = None,
-                              logfile_anonymous: bool = True) -> List[Tuple[str, str]]:
+                              opset_version: int = 14, logfile_anonymous: bool = True) -> List[Tuple[str, str]]:
     name = name or os.path.basename(os.path.abspath(workdir))
     os.makedirs(export_dir, exist_ok=True)
 
@@ -79,7 +79,7 @@ def export_model_from_workdir(workdir, export_dir, name: Optional[str] = None,
 
     best_onnx_exp = os.path.join(export_dir, f'{name}_model.onnx')
     logging.info(f'Export onnx model to {best_onnx_exp!r}')
-    export_yolo_to_onnx(workdir, best_onnx_exp)
+    export_yolo_to_onnx(workdir, best_onnx_exp, opset_version=opset_version)
     files.append((best_onnx_exp, 'model.onnx'))
 
     for f in _KNOWN_FILES:
@@ -118,10 +118,12 @@ print_version = partial(_origin_print_version, 'export')
               help='Work directory of the training.', show_default=True)
 @click.option('--name', '-n', 'name', type=str, default=None,
               help='Name of the checkpoint. Default is the basename of the work directory.', show_default=True)
-def cli(workdir: str, name: Optional[str]):
+@click.option('--opset_version', 'opset_version', type=int, default=14,
+              help='Version of OP set.', show_default=True)
+def cli(workdir: str, name: Optional[str], opset_version: int = 14):
     logging.try_init_root(logging.INFO)
     export_dir = os.path.join(workdir, 'export')
-    files = export_model_from_workdir(workdir, export_dir, name)
+    files = export_model_from_workdir(workdir, export_dir, name, opset_version=opset_version)
 
     zip_file = os.path.join(export_dir, f'{name}.zip')
     logging.info(f'Packing all the above file to archive {zip_file!r}')
