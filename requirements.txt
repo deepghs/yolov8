@@ -1,0 +1,16 @@
+hbutils>=0.9.1
+torch
+matplotlib
+pillow
+numpy
+huggingface_hub
+pandas
+typing_extensions; python_version < '3.8'
+dghs-imgutils>=0.6.0
+tensorboard
+DI-toolkit
+click>=7
+ultralytics==8.0.196
+roboflow>=1.0.1
+tabulate
+hfutils>=0.4.4
