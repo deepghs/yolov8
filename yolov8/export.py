@@ -44,10 +44,14 @@ def export_model_from_workdir(workdir, export_dir, name: Optional[str] = None,
     best_pt_exp = os.path.join(export_dir, f'{name}_model.pt')
     logging.info(f'Copying best pt {best_pt!r} to {best_pt_exp!r}')
     state_dict = torch.load(best_pt)
-    state_dict['train_args']['data'] = sha3(state_dict['train_args']['data'].encode(), n=224)
-    state_dict['train_args']['project'] = sha3(state_dict['train_args']['project'].encode(), n=224)
-    if '/' in state_dict['train_args']['model'] or '\\' in state_dict['train_args']['model']:
-        state_dict['train_args']['model'] = sha3(state_dict['train_args']['model'].encode(), n=224)
+    if 'train_args' in state_dict:
+        if state_dict['train_args']['data']:
+            state_dict['train_args']['data'] = sha3(state_dict['train_args']['data'].encode(), n=224)
+        if state_dict['train_args']['project']:
+            state_dict['train_args']['project'] = sha3(state_dict['train_args']['project'].encode(), n=224)
+        if state_dict['train_args']['model'] and \
+                ('/' in state_dict['train_args']['model'] or '\\' in state_dict['train_args']['model']):
+            state_dict['train_args']['model'] = sha3(state_dict['train_args']['model'].encode(), n=224)
     torch.save(state_dict, best_pt_exp)
     # shutil.copy(best_pt, best_pt_exp)
     files.append((best_pt_exp, 'model.pt'))

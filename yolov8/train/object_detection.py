@@ -14,8 +14,8 @@ def train_object_detection(workdir: str, train_cfg: str, level: str = 's', yvers
     previous_pt = os.path.join(workdir, 'weights', 'last.pt')
     if pretrained and os.path.isdir(pretrained):
         pretrained = os.path.join(pretrained, 'weights', 'best.pt')
-    if yversion == 11 or yversion == '11':
-        model = YOLO(pretrained or f'yolo11{level}.pt')
+    if yversion in {11, '11', 12, '12'}:
+        model = YOLO(pretrained or f'yolo{yversion}{level}.pt')
         model_type = 'yolo'
     elif isinstance(yversion, str) and yversion.lower() == 'rtdetr':
         model = RTDETR(pretrained or f'rtdetr-{level}.pt')
