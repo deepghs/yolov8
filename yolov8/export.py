@@ -59,7 +59,8 @@ def export_model_from_workdir(workdir, export_dir, name: Optional[str] = None,
     model_type = 'yolo'
     if os.path.exists(os.path.join(workdir, 'model_type.json')):
         with open(os.path.join(workdir, 'model_type.json'), 'r') as f:
-            model_type = json.load(f)['model_type']
+            model_type_info = json.load(f)
+            model_type = model_type_info['model_type']
     if model_type == 'yolo':
         names_map = YOLO(best_pt).names
     else:
@@ -69,7 +70,7 @@ def export_model_from_workdir(workdir, export_dir, name: Optional[str] = None,
         json.dump(labels, f, ensure_ascii=False, indent=4)
     files.append((os.path.join(workdir, 'labels.json'), 'labels.json'))
     with open(os.path.join(workdir, 'model_type.json'), 'w') as f:
-        json.dump({'model_type': model_type}, f, ensure_ascii=False, indent=4)
+        json.dump(model_type_info, f, ensure_ascii=False, indent=4)
     files.append((os.path.join(workdir, 'model_type.json'), 'model_type.json'))
 
     if os.path.exists(os.path.join(workdir, 'F1_curve.png')):
