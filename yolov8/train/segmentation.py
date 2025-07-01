@@ -28,7 +28,6 @@ def train_segmentation(workdir: str, train_cfg: str, level: str = 's', yversion:
             'model_type': model_type,
             'problem_type': 'segmentation',
         }, f)
-    quit()
 
     if os.path.isdir(train_cfg):
         if os.path.exists(os.path.join(train_cfg, 'data.yaml')):
