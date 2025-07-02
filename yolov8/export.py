@@ -65,10 +65,12 @@ def export_model_from_workdir(workdir, export_dir, name: Optional[str] = None,
     files.append((best_pt_exp, 'model.pt'))
 
     model_type = 'yolo'
+    problem_type = 'detection'
     if os.path.exists(os.path.join(workdir, 'model_type.json')):
         with open(os.path.join(workdir, 'model_type.json'), 'r') as f:
             model_type_info = json.load(f)
             model_type = model_type_info['model_type']
+            problem_type = model_type_info.get('problem_type', 'detection')
     if model_type == 'yolo':
         names_map = YOLO(best_pt).names
     else:
@@ -81,8 +83,12 @@ def export_model_from_workdir(workdir, export_dir, name: Optional[str] = None,
         json.dump(model_type_info, f, ensure_ascii=False, indent=4)
     files.append((os.path.join(workdir, 'model_type.json'), 'model_type.json'))
 
-    if os.path.exists(os.path.join(workdir, 'F1_curve.png')):
+    threshold, max_f1_score = None, None
+    if problem_type == 'detection' and os.path.exists(os.path.join(workdir, 'F1_curve.png')):
         threshold, max_f1_score = get_f1_and_threshold_from_image(os.path.join(workdir, 'F1_curve.png'))
+    elif problem_type == 'segmentation' and os.path.exists(os.path.join(workdir, 'MaskF1_curve.png')):
+        threshold, max_f1_score = get_f1_and_threshold_from_image(os.path.join(workdir, 'MaskF1_curve.png'))
+    if threshold is not None and max_f1_score is not None:
         with open(os.path.join(workdir, 'threshold.json'), 'w') as f:
             json.dump({
                 'f1_score': max_f1_score,
