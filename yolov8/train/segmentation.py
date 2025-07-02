@@ -40,6 +40,7 @@ def train_segmentation(workdir: str, train_cfg: str, level: str = 's', yversion:
         else:
             raise IsADirectoryError(f'train_cfg {train_cfg} is a directory, please given a configuration file.')
 
+    assert os.path.exists(model_type_file)
     # Train the model using the 'coco128.yaml' dataset for 3 epochs
     model.train(
         data=train_cfg,
