@@ -5,6 +5,8 @@ from typing import Optional, Union
 from ditk import logging
 from ultralytics import YOLO
 
+from ..utils import delayed_execution
+
 
 def train_segmentation(workdir: str, train_cfg: str, level: str = 's', yversion: Union[int, str] = 8,
                        max_epochs: int = 200, batch: int = 16, pretrained: Optional[str] = None, **kwargs):
@@ -24,13 +26,17 @@ def train_segmentation(workdir: str, train_cfg: str, level: str = 's', yversion:
     workdir = os.path.abspath(workdir)
     logging.info(f'Workdir: {workdir!r}')
     os.makedirs(workdir, exist_ok=True)
-    model_type_file = os.path.join(workdir, 'model_type.json')
-    logging.info(f'Writing to model type file {model_type_file!r} ...')
-    with open(model_type_file, 'w') as f:
-        json.dump({
-            'model_type': model_type,
-            'problem_type': 'segmentation',
-        }, f)
+
+    def _writing_model_type_file():
+        model_type_file = os.path.join(workdir, 'model_type.json')
+        logging.info(f'Writing to model type file {model_type_file!r} ...')
+        with open(model_type_file, 'w') as f:
+            json.dump({
+                'model_type': model_type,
+                'problem_type': 'segmentation',
+            }, f)
+
+    delayed_execution(_writing_model_type_file, delay_seconds=30)
 
     if os.path.isdir(train_cfg):
         if os.path.exists(os.path.join(train_cfg, 'data.yaml')):
@@ -40,7 +46,6 @@ def train_segmentation(workdir: str, train_cfg: str, level: str = 's', yversion:
         else:
             raise IsADirectoryError(f'train_cfg {train_cfg} is a directory, please given a configuration file.')
 
-    assert os.path.exists(model_type_file)
     # Train the model using the 'coco128.yaml' dataset for 3 epochs
     model.train(
         data=train_cfg,

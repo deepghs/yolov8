@@ -5,6 +5,8 @@ from typing import Optional, Union
 from ditk import logging
 from ultralytics import YOLO, RTDETR
 
+from ..utils import delayed_execution
+
 
 def train_object_detection(workdir: str, train_cfg: str, level: str = 's', yversion: Union[int, str] = 8,
                            max_epochs: int = 200, batch: int = 16, pretrained: Optional[str] = None, **kwargs):
@@ -26,10 +28,17 @@ def train_object_detection(workdir: str, train_cfg: str, level: str = 's', yvers
     resume = os.path.exists(previous_pt)
     workdir = os.path.abspath(workdir)
     os.makedirs(workdir, exist_ok=True)
-    with open(os.path.join(workdir, 'model_type.json'), 'w') as f:
-        json.dump({
-            'model_type': model_type,
-        }, f)
+
+    def _writing_model_type_file():
+        model_type_file = os.path.join(workdir, 'model_type.json')
+        logging.info(f'Writing to model type file {model_type_file!r} ...')
+        with open(model_type_file, 'w') as f:
+            json.dump({
+                'model_type': model_type,
+                'problem_type': 'detection',
+            }, f)
+
+    delayed_execution(_writing_model_type_file, delay_seconds=30)
 
     if os.path.isdir(train_cfg):
         if os.path.exists(os.path.join(train_cfg, 'data.yaml')):
