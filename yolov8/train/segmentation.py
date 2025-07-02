@@ -24,7 +24,9 @@ def train_segmentation(workdir: str, train_cfg: str, level: str = 's', yversion:
     workdir = os.path.abspath(workdir)
     logging.info(f'Workdir: {workdir!r}')
     os.makedirs(workdir, exist_ok=True)
-    with open(os.path.join(workdir, 'model_type.json'), 'w') as f:
+    model_type_file = os.path.join(workdir, 'model_type.json')
+    logging.info(f'Writing to model type file {model_type_file!r} ...')
+    with open(model_type_file, 'w') as f:
         json.dump({
             'model_type': model_type,
             'problem_type': 'segmentation',
