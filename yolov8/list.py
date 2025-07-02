@@ -35,6 +35,7 @@ def list_(repository: str, revision: str = 'main'):
     d_labels = {}
     d_thresholds = {}
     d_model_types = {}
+    d_problem_types = {}
     for pt_path in tqdm(hf_fs.glob(hf_fs_path(
             repo_id=repository,
             repo_type='model',
@@ -45,10 +46,14 @@ def list_(repository: str, revision: str = 'main'):
         name = os.path.dirname(pt_file)
 
         if hf_fs.exists(f'{repository}/{name}/model_type.json'):
-            model_type = json.loads(hf_fs.read_text(f'{repository}/{name}/model_type.json'))['model_type']
+            model_type_info = json.loads(hf_fs.read_text(f'{repository}/{name}/model_type.json'))
+            model_type = model_type_info['model_type']
+            problem_type = model_type_info.get('problem_type', 'detection')
         else:
             model_type = 'yolo'
+            problem_type = 'detection'
         d_model_types[name] = model_type
+        d_problem_types[name] = problem_type
         if model_type == 'yolo':
             model_cls = YOLO
         else:
@@ -202,7 +207,10 @@ def list_(repository: str, revision: str = 'main'):
         for name, model_type in d_model_types.items():
             os.makedirs(os.path.join(td, name), exist_ok=True)
             with open(os.path.join(td, name, 'model_type.json'), 'w') as f:
-                json.dump({'model_type': model_type}, f, ensure_ascii=False, indent=4)
+                json.dump({
+                    'model_type': model_type,
+                    'problem_type': d_problem_types[name],
+                }, f, ensure_ascii=False, indent=4)
 
         with open(os.path.join(td, 'README.md'), 'w') as f:
             if not hf_fs.exists(hf_fs_path(
