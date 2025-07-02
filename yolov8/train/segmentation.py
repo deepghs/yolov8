@@ -36,6 +36,8 @@ def train_segmentation(workdir: str, train_cfg: str, level: str = 's', yversion:
                 'problem_type': 'segmentation',
             }, f)
 
+    # the damn framework will clean the working directory
+    # so we have to do like this to make sure the meta information can be written properly
     delayed_execution(_writing_model_type_file, delay_seconds=30)
 
     if os.path.isdir(train_cfg):
