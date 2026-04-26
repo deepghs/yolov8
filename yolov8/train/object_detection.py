@@ -1,11 +1,8 @@
-import json
 import os.path
 from typing import Optional, Union
 
 from ditk import logging
 from ultralytics import YOLO, RTDETR
-
-from ..utils import delayed_execution
 
 
 def train_object_detection(workdir: str, train_cfg: str, level: str = 's', yversion: Union[int, str] = 8,
@@ -18,29 +15,13 @@ def train_object_detection(workdir: str, train_cfg: str, level: str = 's', yvers
         pretrained = os.path.join(pretrained, 'weights', 'best.pt')
     if yversion in {11, '11', 12, '12'}:
         model = YOLO(pretrained or f'yolo{yversion}{level}.pt')
-        model_type = 'yolo'
     elif isinstance(yversion, str) and yversion.lower() == 'rtdetr':
         model = RTDETR(pretrained or f'rtdetr-{level}.pt')
-        model_type = 'rtdetr'
     else:
         model = YOLO(pretrained or f'yolov{yversion}{level}.pt')
-        model_type = 'yolo'
     resume = os.path.exists(previous_pt)
     workdir = os.path.abspath(workdir)
     os.makedirs(workdir, exist_ok=True)
-
-    def _writing_model_type_file():
-        model_type_file = os.path.join(workdir, 'model_type.json')
-        logging.info(f'Writing to model type file {model_type_file!r} ...')
-        with open(model_type_file, 'w') as f:
-            json.dump({
-                'model_type': model_type,
-                'problem_type': 'detection',
-            }, f)
-
-    # the damn framework will clean the working directory
-    # so we have to do like this to make sure the meta information can be written properly
-    delayed_execution(_writing_model_type_file, delay_seconds=30)
 
     if os.path.isdir(train_cfg):
         if os.path.exists(os.path.join(train_cfg, 'data.yaml')):

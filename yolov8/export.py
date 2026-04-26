@@ -14,7 +14,7 @@ from hbutils.encoding import sha3
 from ultralytics import YOLO, RTDETR
 
 from .onnx import export_yolo_to_onnx
-from .utils import GLOBAL_CONTEXT_SETTINGS, get_f1_and_threshold_from_image
+from .utils import GLOBAL_CONTEXT_SETTINGS, derive_model_meta, get_f1_and_threshold_from_image
 from .utils import print_version as _origin_print_version
 
 _KNOWN_FILES = [
@@ -51,7 +51,12 @@ def export_model_from_workdir(workdir, export_dir, name: Optional[str] = None,
     best_pt = os.path.join(workdir, 'weights', 'best.pt')
     best_pt_exp = os.path.join(export_dir, f'{name}_model.pt')
     logging.info(f'Copying best pt {best_pt!r} to {best_pt_exp!r}')
-    state_dict = torch.load(best_pt)
+    state_dict = torch.load(best_pt, map_location='cpu', weights_only=False)
+    # Derive (model_type, problem_type) from the checkpoint's embedded model
+    # object. Done before the train_args anonymisation below for clarity —
+    # the class object is untouched by that anonymisation either way.
+    model_type, problem_type = derive_model_meta(state_dict)
+    model_type_info = {'model_type': model_type, 'problem_type': problem_type}
     if 'train_args' in state_dict:
         if state_dict['train_args']['data']:
             state_dict['train_args']['data'] = sha3(state_dict['train_args']['data'].encode(), n=224)
@@ -64,13 +69,6 @@ def export_model_from_workdir(workdir, export_dir, name: Optional[str] = None,
     # shutil.copy(best_pt, best_pt_exp)
     files.append((best_pt_exp, 'model.pt'))
 
-    model_type = 'yolo'
-    problem_type = 'detection'
-    if os.path.exists(os.path.join(workdir, 'model_type.json')):
-        with open(os.path.join(workdir, 'model_type.json'), 'r') as f:
-            model_type_info = json.load(f)
-            model_type = model_type_info['model_type']
-            problem_type = model_type_info.get('problem_type', 'detection')
     if model_type == 'yolo':
         names_map = YOLO(best_pt).names
     else:
@@ -79,9 +77,13 @@ def export_model_from_workdir(workdir, export_dir, name: Optional[str] = None,
     with open(os.path.join(workdir, 'labels.json'), 'w') as f:
         json.dump(labels, f, ensure_ascii=False, indent=4)
     files.append((os.path.join(workdir, 'labels.json'), 'labels.json'))
-    with open(os.path.join(workdir, 'model_type.json'), 'w') as f:
+    # model_type.json is no longer written into the workdir — its content is
+    # derived from the checkpoint and materialised here purely for the upload
+    # bundle so the on-HF artifact layout stays unchanged.
+    mt_path = os.path.join(export_dir, f'{name}_model_type.json')
+    with open(mt_path, 'w') as f:
         json.dump(model_type_info, f, ensure_ascii=False, indent=4)
-    files.append((os.path.join(workdir, 'model_type.json'), 'model_type.json'))
+    files.append((mt_path, 'model_type.json'))
 
     threshold, max_f1_score = None, None
     if problem_type == 'detection' and os.path.exists(os.path.join(workdir, 'F1_curve.png')):

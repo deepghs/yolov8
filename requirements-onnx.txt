@@ -2,3 +2,4 @@ onnx
 onnxoptimizer
 onnxsim
 onnxruntime
+onnxscript  # torch>=2.6 routes torch.onnx.export through this; ultralytics relies on torch.onnx

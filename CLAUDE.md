@@ -56,8 +56,8 @@
     ├── onnx.py                ONNX export (YOLO/RTDETR), with simplify
     └── utils/
         ├── __init__.py        re-exports the utilities below
+        ├── ckpt.py            derive_model_meta — (model_type, problem_type) from a checkpoint
         ├── cli.py             GLOBAL_CONTEXT_SETTINGS, print_version
-        ├── execute.py         delayed_execution (threading.Timer for late metadata writes)
         ├── f1plot.py          OCR the best threshold off the F1-curve image
         ├── md.py              markdown table -> DataFrame
         └── pe.py              pretty-print numbers as k/M/G
@@ -67,11 +67,10 @@
 
 1. **Train**: `yolov8.train.train_object_detection` / `train_segmentation`.
    - Picks the model family (v8/9/10/11/12 use `YOLO`, `rtdetr` uses
-     `RTDETR`), conventionally writes to `runs/<task_name>/`, and uses
-     `delayed_execution` to write `model_type.json` **30 seconds later**.
-     This is because Ultralytics wipes the workdir at training start, so
-     the metadata file must be written *after* that wipe. Do not rewrite
-     this as a synchronous pre-train write.
+     `RTDETR`), conventionally writes to `runs/<task_name>/`. **No
+     local sidecar metadata is written**; `(model_type, problem_type)`
+     are derived on demand from the trained checkpoint via
+     `yolov8.utils.derive_model_meta` (see §1.6).
    - If `weights/last.pt` exists, training auto-resumes (`resume=True`).
 2. **Export**: `yolov8.export.export_model_from_workdir(workdir, export_dir, ...)`
    - When copying `weights/best.pt`, **`train_args.data` / `project` / `model`
@@ -184,11 +183,18 @@ content to GitHub via `gh`.
 - **`AGENTS.md` MUST remain a symlink to `CLAUDE.md`.** If a tool /
   sandbox materialised it as a regular file, fold any new content back
   into `CLAUDE.md` and recreate the link with `ln -sf CLAUDE.md AGENTS.md`.
-- Do **not** turn the
-  `delayed_execution(_writing_model_type_file, delay_seconds=30)` call in
-  `yolov8/train/object_detection.py` and `yolov8/train/segmentation.py`
-  into a synchronous write — Ultralytics wipes the workdir at training
-  start, so the late write is load-bearing.
+- The training entry points must **not** write a `model_type.json`
+  sidecar into the workdir. The previous code did this via a 30-second
+  `threading.Timer` daemon (the comment claimed Ultralytics wipes the
+  workdir at training start, which is true) — but the timer silently
+  loses the file on fast trainings (<30 s), and the same information
+  lives unconditionally inside the embedded model object of every
+  Ultralytics checkpoint. Use `yolov8.utils.derive_model_meta` /
+  `derive_model_meta_from_path` to recover `(model_type, problem_type)`
+  from `weights/best.pt` (or `last.pt`) at export / publish / list
+  time. Do not reintroduce a sidecar write — the on-HF artifact
+  layout is preserved by synthesising `model_type.json` into
+  `export_dir` only inside `export.py`.
 - Preserve the `train_args` sha3 anonymisation in `export.py`; it is a
   publish-time privacy requirement.
 - Bump the version only in `yolov8/config/meta.py`; `setup.py` reads it.

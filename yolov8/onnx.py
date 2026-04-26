@@ -1,21 +1,20 @@
-import json
 import os.path
 from shutil import SameFileError
 
 from hbutils.system import copy
 from ultralytics import YOLO, RTDETR
 
+from .utils import derive_model_meta_from_path
+
 
 def export_yolo_to_onnx(workdir: str, onnx_filename, opset_version: int = 14,
                         no_optimize: bool = False):
-    model_type = 'yolo'
-    if os.path.exists(os.path.join(workdir, 'model_type.json')):
-        with open(os.path.join(workdir, 'model_type.json'), 'r') as f:
-            model_type = json.load(f)['model_type']
+    best_pt = os.path.join(workdir, 'weights', 'best.pt')
+    model_type, _ = derive_model_meta_from_path(best_pt)
     if model_type == 'yolo':
-        yolo = YOLO(os.path.join(workdir, 'weights', 'best.pt'))
+        yolo = YOLO(best_pt)
     else:
-        yolo = RTDETR(os.path.join(workdir, 'weights', 'best.pt'))
+        yolo = RTDETR(best_pt)
 
     if os.path.dirname(onnx_filename):
         os.makedirs(os.path.dirname(onnx_filename), exist_ok=True)

@@ -35,17 +35,37 @@ def cli():
               help='Revision for pushing the model.', show_default=True)
 @click.option('--opset_version', 'opset_version', type=int, default=14,
               help='Version of OP set.', show_default=True)
+@click.option('--dry-run', 'dry_run', is_flag=True, default=False,
+              help='Run the export pipeline and report the upload manifest, '
+                   'but do not create the HF repo or commit. HF_TOKEN is not '
+                   'required in this mode.')
 def huggingface(workdir: str, name: Optional[str],
-                repository: str, revision: str, opset_version: int = 14):
+                repository: str, revision: str, opset_version: int = 14,
+                dry_run: bool = False):
     logging.try_init_root(logging.INFO)
 
-    hf_client = HfApi(token=os.environ['HF_TOKEN'])
-    logging.info(f'Initialize repository {repository!r}')
-    hf_client.create_repo(repo_id=repository, repo_type='model', exist_ok=True)
+    if dry_run:
+        hf_client = None
+    else:
+        hf_client = HfApi(token=os.environ['HF_TOKEN'])
+        logging.info(f'Initialize repository {repository!r}')
+        hf_client.create_repo(repo_id=repository, repo_type='model', exist_ok=True)
 
     with TemporaryDirectory() as td:
         name = name or os.path.basename(os.path.abspath(workdir))
         files = export_model_from_workdir(workdir, td, name, opset_version=opset_version)
+
+        if dry_run:
+            total = 0
+            logging.info(f'[dry-run] would publish {len(files)} files to '
+                         f'{repository!r} on revision {revision!r}:')
+            for local_file, filename in files:
+                size = os.path.getsize(local_file)
+                total += size
+                logging.info(f'[dry-run]   {name}/{filename}  ({size:,} bytes)')
+            logging.info(f'[dry-run] total: {total:,} bytes ({total / 1e6:.2f} MB)')
+            return
+
         current_time = datetime.datetime.now().astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')
         commit_message = f"Publish model {name}, on {current_time}"
         logging.info(f'Publishing model {name!r} to repository {repository!r} ...')
