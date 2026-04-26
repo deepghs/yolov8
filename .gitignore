@@ -1225,3 +1225,18 @@ fabric.properties
 /YOLOv8
 /datasets
 /.env*
+
+# AI agent runtime artifacts (Claude Code / Codex / etc.).
+# CLAUDE.md and AGENTS.md (symlink) are intentionally tracked; everything
+# else produced by these agents stays local.
+/.claude/
+/.claude.json
+/.claude.local.json
+CLAUDE.local.md
+**/CLAUDE.local.md
+.claude-*.log
+/.codex/
+/.codex.json
+/.codexrc
+AGENTS.local.md
+**/AGENTS.local.md
