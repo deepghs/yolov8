@@ -17,7 +17,7 @@ from tqdm import tqdm
 from ultralytics import YOLO, RTDETR
 from ultralytics.utils.torch_utils import get_num_params, get_flops
 
-from .utils import GLOBAL_CONTEXT_SETTINGS, float_pe, markdown_to_df, get_f1_and_threshold_from_image
+from .utils import GLOBAL_CONTEXT_SETTINGS, float_pe, markdown_to_df
 
 
 @click.command('huggingface', context_settings={**GLOBAL_CONTEXT_SETTINGS},
@@ -88,6 +88,10 @@ def list_(repository: str, revision: str = 'main'):
             'FLOPS': float_pe(get_flops(model.model) * 1e9),
             'Params': float_pe(get_num_params(model.model)),
         }
+        # Read F1 / threshold from threshold.json (written natively at
+        # train time, see yolov8.utils.compute_threshold_data). Repos
+        # uploaded before this refactor that lack threshold.json get an
+        # N/A column — re-publishing them is the way to backfill.
         if hf_fs.exists(hf_fs_path(
                 repo_id=repository,
                 repo_type='model',
@@ -105,26 +109,7 @@ def list_(repository: str, revision: str = 'main'):
             logging.info(f'Max F1 Score: {max_f1_score:.4f}, Threshold: {threshold:.4f}')
             row['F1 Score'] = max_f1_score
             row['Threshold'] = threshold
-            d_thresholds[name] = (max_f1_score, threshold)
-        elif hf_fs.exists(hf_fs_path(
-                repo_id=repository,
-                repo_type='model',
-                filename=f'{name}/F1_curve.png',
-                revision=revision,
-        )):
-            threshold, max_f1_score = get_f1_and_threshold_from_image(hf_hub_download(
-                repo_id=repository,
-                repo_type='model',
-                filename=f'{name}/F1_curve.png',
-                revision=revision,
-            ))
-            if threshold is not None:
-                logging.info(f'Max F1 Score: {max_f1_score:.4f}, Threshold: {threshold:.4f}')
-                row['F1 Score'] = max_f1_score
-                row['Threshold'] = threshold
-                d_thresholds[name] = (max_f1_score, threshold)
-            else:
-                logging.warning('No F1 score or threshold detected in F1 plot image.')
+            d_thresholds[name] = th_info
         row = {**row, **metrics}
         if hf_fs.exists(hf_fs_path(
                 repo_id=repository,
@@ -197,13 +182,13 @@ def list_(repository: str, revision: str = 'main'):
             os.makedirs(os.path.join(td, name), exist_ok=True)
             with open(os.path.join(td, name, 'labels.json'), 'w') as f:
                 json.dump(labels, f, ensure_ascii=False, indent=4)
-        for name, (max_f1_score, threshold) in d_thresholds.items():
+        for name, th_info in d_thresholds.items():
             os.makedirs(os.path.join(td, name), exist_ok=True)
             with open(os.path.join(td, name, 'threshold.json'), 'w') as f:
-                json.dump({
-                    'f1_score': max_f1_score,
-                    'threshold': threshold,
-                }, f, ensure_ascii=False, indent=4)
+                # th_info is the verbatim dict pulled from the existing
+                # remote threshold.json — preserves any forward-compatible
+                # extra fields (e.g. per_class) the writer added.
+                json.dump(th_info, f, ensure_ascii=False, indent=4)
         for name, model_type in d_model_types.items():
             os.makedirs(os.path.join(td, name), exist_ok=True)
             with open(os.path.join(td, name, 'model_type.json'), 'w') as f:

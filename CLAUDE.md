@@ -58,9 +58,9 @@
         ├── __init__.py        re-exports the utilities below
         ├── ckpt.py            derive_model_meta — (model_type, problem_type) from a checkpoint
         ├── cli.py             GLOBAL_CONTEXT_SETTINGS, print_version
-        ├── f1plot.py          OCR the best threshold off the F1-curve image
         ├── md.py              markdown table -> DataFrame
-        └── pe.py              pretty-print numbers as k/M/G
+        ├── pe.py              pretty-print numbers as k/M/G
+        └── threshold.py       compute_threshold_data — F1 / threshold from validator metrics
 ```
 
 ### 1.2 Core data flow
@@ -76,8 +76,12 @@
    - When copying `weights/best.pt`, **`train_args.data` / `project` / `model`
      are sha3-anonymised** to avoid leaking the trainer's local paths into
      published artifacts. Do not revert this to plaintext.
-   - `yolov8.utils.f1plot.get_f1_and_threshold_from_image` OCRs the best
-     threshold off the F1 curve image and writes `threshold.json`.
+   - `threshold.json` is written **at training time** by
+     `yolov8.utils.compute_threshold_data` directly from the validator's
+     in-memory `f1_curve` / `px` arrays (mean across classes →
+     `f1_score`/`threshold`, plus a per-class breakdown). Export just
+     ships the file if it exists. The previous OCR-from-F1_curve.png
+     path has been removed.
    - `yolov8.onnx.export_yolo_to_onnx` defaults to
      `dynamic=True, simplify=True, opset=14`.
 3. **Publish**: `yolov8.publish`

@@ -257,9 +257,11 @@ What the export does, beyond just running `yolo.export()`:
 - Anonymises the training-time host paths in `train_args` (`data`, `project`,
   `model`) using SHA3, so published checkpoints don't leak local directory
   layouts.
-- Reads `F1_curve.png` (or `MaskF1_curve.png` for segmentation), OCRs the
-  best F1 score and its threshold, and writes `threshold.json`. Downstream
-  inference tooling reads this to suggest a sensible `conf_threshold`.
+- Ships the `threshold.json` produced at training time (mean and
+  per-class best F1 + threshold, read directly from the validator's
+  in-memory curves — see `yolov8.utils.compute_threshold_data`).
+  Downstream inference tooling can read this to pick a sensible
+  `conf_threshold`.
 - Anonymises the hostname in TensorBoard event filenames before bundling.
 - Produces a zip at `runs/<task>/export/<task>.zip` containing the
   checkpoint, ONNX, plots, csv, labels, and metadata.

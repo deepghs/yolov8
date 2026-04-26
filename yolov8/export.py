@@ -14,7 +14,7 @@ from hbutils.encoding import sha3
 from ultralytics import YOLO, RTDETR
 
 from .onnx import export_yolo_to_onnx
-from .utils import GLOBAL_CONTEXT_SETTINGS, derive_model_meta, get_f1_and_threshold_from_image
+from .utils import GLOBAL_CONTEXT_SETTINGS, derive_model_meta
 from .utils import print_version as _origin_print_version
 
 _KNOWN_FILES = [
@@ -85,18 +85,13 @@ def export_model_from_workdir(workdir, export_dir, name: Optional[str] = None,
         json.dump(model_type_info, f, ensure_ascii=False, indent=4)
     files.append((mt_path, 'model_type.json'))
 
-    threshold, max_f1_score = None, None
-    if problem_type == 'detection' and os.path.exists(os.path.join(workdir, 'F1_curve.png')):
-        threshold, max_f1_score = get_f1_and_threshold_from_image(os.path.join(workdir, 'F1_curve.png'))
-    elif problem_type == 'segmentation' and os.path.exists(os.path.join(workdir, 'MaskF1_curve.png')):
-        threshold, max_f1_score = get_f1_and_threshold_from_image(os.path.join(workdir, 'MaskF1_curve.png'))
-    if threshold is not None and max_f1_score is not None:
-        with open(os.path.join(workdir, 'threshold.json'), 'w') as f:
-            json.dump({
-                'f1_score': max_f1_score,
-                'threshold': threshold,
-            }, f, ensure_ascii=False, indent=4)
-        files.append((os.path.join(workdir, 'threshold.json'), 'threshold.json'))
+    # threshold.json is now produced at training time directly from the
+    # validator's per-class arrays (yolov8.utils.compute_threshold_data).
+    # If it is present in the workdir, ship it; otherwise — same fate as
+    # the legacy OCR-failure case — silently skip.
+    threshold_local = os.path.join(workdir, 'threshold.json')
+    if os.path.exists(threshold_local):
+        files.append((threshold_local, 'threshold.json'))
 
     best_onnx_exp = os.path.join(export_dir, f'{name}_model.onnx')
     logging.info(f'Export onnx model to {best_onnx_exp!r}')
