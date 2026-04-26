@@ -53,7 +53,11 @@
     ├── export.py              exports best.pt + ONNX + curves/csv from a workdir, with anonymisation
     ├── publish.py             `python -m yolov8.publish {huggingface,roboflow}` CLI
     ├── list.py                `python -m yolov8.list` scans an HF repo and writes a README table
-    ├── onnx.py                ONNX export (YOLO/RTDETR), with simplify
+    ├── onnx.py                ONNX export (YOLO/RTDETR); also dual-head
+    │                          (predictions + embedding) export — see §1.7
+    ├── embed.py               universal image-embedding extractor for any
+    │                          ult model object (YOLO/RTDETR/raw BaseModel);
+    │                          internal — not re-exported from __init__.py
     └── utils/
         ├── __init__.py        re-exports the utilities below
         ├── ckpt.py            derive_model_meta — (model_type, problem_type) from a checkpoint
@@ -148,6 +152,36 @@
   hidden constraints, operational discipline. Sync usage-related
   changes to `README.md`; keep architecture / pitfall / discipline
   changes here.
+
+### 1.7 Image embeddings & dual-head ONNX (internal)
+
+`yolov8/embed.py` and the `export_yolo_to_onnx_with_embedding(...)`
+function in `yolov8/onnx.py` together expose a way to obtain a 1D image
+embedding from any Ultralytics-supported model object (YOLO/RTDETR/raw
+`BaseModel`) and to ship a dual-output ONNX (`predictions` + `embedding`).
+These are deliberately **not** re-exported from `yolov8/__init__.py` —
+treat them as an internal API while we evaluate the surface.
+
+Hidden constraints worth knowing before editing:
+
+- The extractor must NOT call `inner.predict(x, embed=...)`. The `embed=`
+  keyword was added in ultralytics 8.1.x; we still support 8.0.196 (the
+  pinned version of the legacy roboflow publish path). Instead, always
+  route through `EmbedHead`, which re-implements the embed branch of
+  `BaseModel._predict_once` against the version-stable
+  `m.i / m.f / save` ModuleList protocol.
+- The dual-head wrapper walks `inner.model[:-1]` and explicitly invokes
+  the head with the right signature (`RTDETRDecoder.forward(x, batch=None)`
+  vs the YOLO `Detect.forward(x)` family). Setting `m.export = True` on
+  the head is what makes the ONNX graph emit a single tensor instead of
+  the `(decoded, raw)` tuple eval-mode normally returns — mirror this if
+  you add new export paths.
+- The compatibility matrix is verified against ultralytics 8.0.196,
+  8.1.47, 8.2.103, 8.3.40, and 8.3.105 via `tmp_embed/compat_smoke.py`
+  in a sibling conda env (`yolov8-compat`). If you change either module
+  in a way that touches ultralytics internals, re-run the matrix in that
+  separate env — do **not** test in the primary `yolov8` env, which has
+  the latest ultralytics pinned and would mask 8.0.x regressions.
 
 ---
 

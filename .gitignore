@@ -1226,6 +1226,11 @@ fabric.properties
 /datasets
 /.env*
 
+# Local scratch dir for embedding / ONNX experiments and ultralytics-version
+# compat matrix runs. Pretrained weights, downloaded datasets, generated logs
+# and rendered visualisations all land here; they do not belong in the repo.
+/tmp_embed/
+
 # AI agent runtime artifacts (Claude Code / Codex / etc.).
 # CLAUDE.md and AGENTS.md (symlink) are intentionally tracked; everything
 # else produced by these agents stays local.
