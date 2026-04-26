@@ -8,13 +8,14 @@ YOLOv8 wrapper for quicking train model
 git clone https://github.com/deepghs/yolov8.git
 cd yolov8
 
-# if you need to integrate with roboflow platform
+# Main install: training (yolov8/v9/v10/v11/v12, rtdetr) + huggingface publish + onnx export
 pip install -r requirements.txt
 pip install -r requirements-onnx.txt
 
-# if you need to use the newest yolo models
-pip install -r requirements-raw.txt
-pip install -r requirements-onnx.txt
+# Optional: enable `python -m yolov8.publish roboflow ...`.
+# Roboflow is no longer a primary feature here; this extra is provided
+# for legacy use and pins ultralytics back to 8.0.196 for SDK compatibility.
+pip install -r requirements-roboflow.txt
 ```
 
 ## Training
@@ -42,8 +43,7 @@ if __name__ == '__main__':
     # - 11: yolo11 model (see: https://docs.ultralytics.com/models/yolo11/)
     # - rtdetr: rtdetr model (https://docs.ultralytics.com/models/rtdetr/)
     # Attention: if you just installed the requirements with `requirements.txt`,
-    #            only yolov8 models are available;
-    #            install requirements with `requirements-raw.txt` if you need other models
+    #            all of yolov8/v9/v10/v11/v12 and rtdetr are available out of the box.
     level = os.environ.get('LEVEL', 's')
     yversion = os.environ.get('YVERSION', '8') or '8'
     if re.fullmatch(r'^\d+$', yversion):
@@ -72,11 +72,17 @@ if __name__ == '__main__':
 
 After the trainings, your training archives will be saved at directory `runs/your_training_task_xxx_xxx`.
 
-## Publishing to Roboflow
+## Publishing to Roboflow (legacy / optional)
 
-You can upload your models (only yolov8 models supported) with the following command
+> Roboflow integration is no longer a primary feature of this project and is
+> kept here for legacy users. It supports yolov8 models only and requires the
+> optional `requirements-roboflow.txt` extra (which pins ultralytics back to
+> 8.0.196 for SDK compatibility).
 
 ```shell
+# install the optional extra first
+pip install -r requirements-roboflow.txt
+
 # your api key of roboflow platform
 export ROBOFLOW_APIKEY=raxxxxxxxxxxxxxxxxxC
 

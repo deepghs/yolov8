@@ -1,0 +1,9 @@
+# Optional dependency set: enables `python -m yolov8.publish roboflow ...`.
+# The Roboflow SDK's `version.deploy("yolov8", ...)` is most reliable on
+# the older Ultralytics 8.0.x line, so this extra pins ultralytics back
+# to that release. Installing this extra therefore downgrades ultralytics
+# from the main requirements.txt range; that is the documented trade-off
+# for using the Roboflow publish path. The Roboflow integration is no
+# longer a primary feature of this project.
+roboflow>=1.0.1
+ultralytics==8.0.196

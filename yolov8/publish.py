@@ -7,7 +7,6 @@ from typing import Optional
 import click
 from ditk import logging
 from huggingface_hub import HfApi, CommitOperationAdd
-from roboflow import Roboflow
 
 from .export import export_model_from_workdir
 from .utils import GLOBAL_CONTEXT_SETTINGS
@@ -74,6 +73,16 @@ def huggingface(workdir: str, name: Optional[str],
               help='Version in project.', show_default=True)
 def roboflow(workdir: str, project: str, version: int):
     logging.try_init_root(logging.INFO)
+
+    try:
+        from roboflow import Roboflow
+    except ImportError as err:
+        raise click.ClickException(
+            "Roboflow integration is an optional extra and is not installed. "
+            "Install it with `pip install -r requirements-roboflow.txt` from "
+            "the repo root. Note that this will downgrade ultralytics to "
+            "8.0.196 for Roboflow SDK compatibility."
+        ) from err
 
     rf = Roboflow(api_key=os.environ['ROBOFLOW_APIKEY'])
     workspace, project_name = project.split('/', maxsplit=2)

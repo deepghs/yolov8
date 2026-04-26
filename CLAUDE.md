@@ -35,8 +35,8 @@
 ├── Makefile                   docs / unittest entry points (see caveat below)
 ├── MANIFEST.in
 ├── setup.py                   wraps setuptools via distutils.core.setup
-├── requirements.txt           runtime deps (pinned: ultralytics==8.0.196)
-├── requirements-raw.txt       newer ultralytics (<=8.3.105, supports v9/v10/11/12/rtdetr)
+├── requirements.txt           main runtime deps (ultralytics<=8.3.105; supports v8/v9/v10/v11/v12/rtdetr)
+├── requirements-roboflow.txt  optional: roboflow publish path (pins ultralytics==8.0.196)
 ├── requirements-onnx.txt      onnx / onnxruntime / onnxsim / onnxoptimizer
 ├── requirements-doc.txt       doc deps
 ├── requirements-test.txt      test deps
@@ -83,8 +83,11 @@
      `dynamic=True, simplify=True, opset=14`.
 3. **Publish**: `yolov8.publish`
    - `huggingface`: needs `HF_TOKEN`; uploads under `<name>/...` in the HF
-     model repo.
-   - `roboflow`: needs `ROBOFLOW_APIKEY`; **only yolov8 models are supported**.
+     model repo. This is the primary publish path.
+   - `roboflow`: needs `ROBOFLOW_APIKEY`; **only yolov8 models are
+     supported**, and the `roboflow` package is an optional extra
+     (`requirements-roboflow.txt`). The import is therefore lazy inside
+     the `roboflow` subcommand — do not move it back to module top.
 4. **Aggregate README**: `yolov8.list`
    - Scans `*/model.pt` in an HF repo, recomputes FLOPS / params, reads
      `threshold.json` / `model_type.json`, builds a unified table, and
@@ -113,15 +116,27 @@
 
 ### 1.4 Choosing dependency sets
 
-- The default `requirements.txt` pins `ultralytics==8.0.196`.
-  This is intentional: it keeps the **Roboflow publish path** working
-  (the roboflow SDK's `version.deploy("yolov8", ...)` is most compatible
-  with this older release).
-- For training newer model families (v9 / v10 / v11 / v12 / rtdetr), use
-  `requirements-raw.txt` instead (`ultralytics<=8.3.105`). **Do not run
-  `publish roboflow` under that dependency set.**
-- `requirements-onnx.txt` is required under either set, otherwise
-  `export.py` cannot run.
+- `requirements.txt` is the **single main dependency set** and constrains
+  `ultralytics<=8.3.105`, so all of v8 / v9 / v10 / v11 / v12 / rtdetr
+  train out of the box. There is no longer a `requirements-raw.txt`
+  (it was merged into `requirements.txt`).
+- `requirements-onnx.txt` is required for ONNX export (`yolov8/onnx.py`,
+  `yolov8/export.py`); install it alongside `requirements.txt`.
+- `requirements-roboflow.txt` is an **optional** extra for the legacy
+  Roboflow publish path. It pulls in `roboflow>=1.0.1` and pins
+  `ultralytics==8.0.196` (the version the Roboflow SDK's
+  `version.deploy("yolov8", ...)` is most compatible with). Installing
+  this extra therefore downgrades ultralytics, which is the documented
+  trade-off. Roboflow is no longer a primary feature; do not promote it
+  back into the main set.
+- This repo is **not** published to PyPI, and there are no plans to
+  publish it. Always install dependencies by pointing pip at the
+  in-tree files (`pip install -r requirements.txt`,
+  `pip install -r requirements-roboflow.txt`, etc.). Do **not** instruct
+  users to run `pip install dghs-yolov8` or `pip install dghs-yolov8[...]`,
+  even though `setup.py` happens to collect `requirements-<group>.txt`
+  into `extras_require` — that machinery is currently unused.
+  The name `zoo` is blacklisted in `setup.py`.
 
 ### 1.5 README vs this file
 
