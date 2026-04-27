@@ -25,10 +25,16 @@ from ditk import logging
 
 from ..utils import (
     GLOBAL_CONTEXT_SETTINGS,
-    hyperparam_callback,
+    hyperparam_callback_factory,
     parse_yversion,
+    yolo_train_param_schema,
 )
 from ..utils import print_version as _origin_print_version
+
+#: Type-checked ``-p key=value`` callback bound to the Ultralytics
+#: train schema. Built once at import time so the CLI doesn't pay the
+#: schema-construction cost per invocation.
+_TRAIN_HP_CALLBACK = hyperparam_callback_factory(yolo_train_param_schema())
 from .object_detection import train_object_detection
 from .segmentation import train_segmentation
 
@@ -123,14 +129,20 @@ def _common_train_options(func):
                           'canonical Ultralytics name for '
                           '<yversion>+<level>.'),
         click.option('-p', '--hyperparam', 'hyperparams',
-                     multiple=True, callback=hyperparam_callback,
+                     multiple=True, callback=_TRAIN_HP_CALLBACK,
                      metavar='KEY=VALUE',
                      help='Extra train kwargs as KEY=VALUE (repeatable). '
-                          'VALUE is JSON-decoded when possible (int, float, '
-                          'bool, list, ...) and treated as a string '
-                          'otherwise. Examples: -p patience=20 -p '
-                          'imgsz=1280 -p device=[0,1,2,3] -p cos_lr=true '
-                          '-p optimizer=AdamW.'),
+                          'Type-checked against the Ultralytics train '
+                          'schema (yolov8.utils.yolo_train_param_schema): '
+                          'patience/epochs/seed/... are int, '
+                          'mosaic/mixup/hsv_*/... are floats in [0,1], '
+                          'cos_lr/save/verbose/... are bool, etc. Lists '
+                          'are comma-separated (no brackets), each '
+                          'element re-typed by the inner spec. Examples: '
+                          '-p patience=20 -p imgsz=1280 '
+                          '-p device=0,1,2,3 -p cos_lr=true '
+                          '-p optimizer=AdamW. Unknown keys fall back '
+                          'to JSON auto-detect.'),
     ]
     for dec in reversed(decorators):
         func = dec(func)
