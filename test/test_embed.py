@@ -19,7 +19,10 @@ from yolov8.embed import (
     get_embedding,
     resolve_inner,
 )
-from yolov8.onnx import export_yolo_to_onnx_with_embedding
+from yolov8.onnx import (
+    export_yolo_to_onnx,
+    export_yolo_to_onnx_with_embedding,
+)
 
 
 # Picked to be small but valid for every family: every YOLO head strides at
@@ -168,20 +171,85 @@ class TestEmbedHeadParity:
 
 
 @pytest.mark.unittest
-class TestDualHeadONNX:
-    """End-to-end: PyTorch dual-head wrapper output == onnxruntime output."""
+class TestPredictOnlyONNX:
+    """``export_yolo_to_onnx`` writes a graph with the imgutils-compatible
+    naming contract: input ``images``, output ``output0`` (and ``output1``
+    for segmentation), full ultralytics-style metadata_props preserved
+    plus a ``dghs.yolov8.*`` namespace."""
 
-    @pytest.mark.parametrize("yaml_name", [
-        "yolov8n.yaml",
-        "yolov8n-seg.yaml",
-        "yolov8n-pose.yaml",
-        "yolov8n-cls.yaml",
-        "yolo11n.yaml",
-        "yolov9t.yaml",
-        "yolov10n.yaml",
-        "yolov5nu.yaml",
+    @pytest.mark.parametrize("yaml_name,expected_outputs", [
+        ("yolov8n.yaml", ["output0"]),
+        ("yolov8n-seg.yaml", ["output0", "output1"]),
+        ("yolov8n-pose.yaml", ["output0"]),
+        ("yolov8n-cls.yaml", ["output0"]),
+        ("yolo11n.yaml", ["output0"]),
+        ("yolov9t.yaml", ["output0"]),
+        ("yolov10n.yaml", ["output0"]),
+        ("yolov5nu.yaml", ["output0"]),
     ])
-    def test_yolo_dual_head(self, tmp_path, yaml_name, cpu):
+    def test_yolo_predict_only(self, tmp_path, yaml_name, expected_outputs, cpu):
+        import json as _json
+        import onnx as _onnx
+
+        model = YOLO(yaml_name)
+        out_path = tmp_path / "predict_only.onnx"
+        export_yolo_to_onnx(
+            model, str(out_path),
+            imgsz=_IMGSZ_YOLO,
+            opset_version=14,
+            dynamic=False,
+            simplify=False,
+            device=cpu,
+        )
+        assert out_path.exists()
+
+        sess = ort.InferenceSession(str(out_path), providers=["CPUExecutionProvider"])
+        names = [o.name for o in sess.get_outputs()]
+        assert names == expected_outputs
+        in_names = [i.name for i in sess.get_inputs()]
+        assert in_names == ["images"]
+
+        x_np = np.random.randn(1, 3, _IMGSZ_YOLO, _IMGSZ_YOLO).astype(np.float32)
+        outputs = sess.run(expected_outputs, {"images": x_np})
+        for o in outputs:
+            assert np.isfinite(o).all()
+
+        # Metadata sanity: every ult-style key the upstream exporter
+        # writes is present, plus our dghs namespace.
+        proto = _onnx.load(str(out_path))
+        md = {p.key: p.value for p in proto.metadata_props}
+        for k in ("description", "author", "date", "version", "license",
+                  "docs", "stride", "task", "batch", "imgsz", "names"):
+            assert k in md, f"ult metadata key '{k}' missing"
+        assert "dghs.yolov8.version" in md
+        assert md["dghs.yolov8.exporter"] == "export_yolo_to_onnx"
+        assert md["dghs.yolov8.has_embedding"] == "0"
+        # imgutils contract: ``imgsz`` is JSON-parseable; ``names`` is a
+        # Python dict literal that imgutils parses with ast - we don't
+        # call ast here, just check that it looks right.
+        _json.loads(md["imgsz"])
+        assert md["names"].startswith("{") and md["names"].endswith("}")
+
+
+@pytest.mark.unittest
+class TestDualHeadONNX:
+    """End-to-end: dual-head ONNX has ``output0`` (+``output1`` for seg)
+    plus ``embedding`` as the trailing output. The head outputs are
+    numerically equivalent to the predict-only export."""
+
+    @pytest.mark.parametrize("yaml_name,head_outputs", [
+        ("yolov8n.yaml", ["output0"]),
+        ("yolov8n-seg.yaml", ["output0", "output1"]),
+        ("yolov8n-pose.yaml", ["output0"]),
+        ("yolov8n-cls.yaml", ["output0"]),
+        ("yolo11n.yaml", ["output0"]),
+        ("yolov9t.yaml", ["output0"]),
+        ("yolov10n.yaml", ["output0"]),
+        ("yolov5nu.yaml", ["output0"]),
+    ])
+    def test_yolo_dual_head(self, tmp_path, yaml_name, head_outputs, cpu):
+        import onnx as _onnx
+
         model = YOLO(yaml_name)
         out_path = tmp_path / "dual.onnx"
         export_yolo_to_onnx_with_embedding(
@@ -196,20 +264,26 @@ class TestDualHeadONNX:
 
         sess = ort.InferenceSession(str(out_path), providers=["CPUExecutionProvider"])
         names = [o.name for o in sess.get_outputs()]
-        assert names == ["predictions", "embedding"]
+        assert names == head_outputs + ["embedding"]
+        assert [i.name for i in sess.get_inputs()] == ["images"]
 
         x_np = np.random.randn(1, 3, _IMGSZ_YOLO, _IMGSZ_YOLO).astype(np.float32)
-        pred_onnx, emb_onnx = sess.run(["predictions", "embedding"], {"images": x_np})
-        assert pred_onnx.shape[0] == 1
+        outs = sess.run(names, {"images": x_np})
+        emb_onnx = outs[-1]
         assert emb_onnx.ndim == 2 and emb_onnx.shape[0] == 1
         assert np.isfinite(emb_onnx).all()
 
-        # PyTorch reference using the public extractor must match the onnx
-        # embedding column-for-column.
+        # PyTorch reference must match column-for-column.
         x_t = torch.from_numpy(x_np)
         emb_torch = get_embedding(model, x_t, device=cpu).cpu().numpy()
         max_diff = float(np.abs(emb_torch - emb_onnx).max())
         assert max_diff < 1e-3, f"embedding mismatch: max|d|={max_diff}"
+
+        proto = _onnx.load(str(out_path))
+        md = {p.key: p.value for p in proto.metadata_props}
+        assert md["dghs.yolov8.exporter"] == "export_yolo_to_onnx_with_embedding"
+        assert md["dghs.yolov8.has_embedding"] == "1"
+        assert md["dghs.yolov8.embed_dim"] == str(emb_onnx.shape[1])
 
     def test_rtdetr_dual_head(self, tmp_path, cpu):
         model = RTDETR("rtdetr-l.yaml")
@@ -226,13 +300,56 @@ class TestDualHeadONNX:
 
         sess = ort.InferenceSession(str(out_path), providers=["CPUExecutionProvider"])
         names = [o.name for o in sess.get_outputs()]
-        assert names == ["predictions", "embedding"]
+        assert names == ["output0", "embedding"]
 
         x_np = np.random.randn(1, 3, _IMGSZ_RTDETR, _IMGSZ_RTDETR).astype(np.float32)
-        pred_onnx, emb_onnx = sess.run(["predictions", "embedding"], {"images": x_np})
+        pred_onnx, emb_onnx = sess.run(["output0", "embedding"], {"images": x_np})
         assert emb_onnx.shape == (1, 256)
         assert np.isfinite(emb_onnx).all()
 
         x_t = torch.from_numpy(x_np)
         emb_torch = get_embedding(model, x_t, device=cpu).cpu().numpy()
         assert np.allclose(emb_torch, emb_onnx, atol=1e-3)
+
+
+@pytest.mark.unittest
+class TestPredictParity:
+    """Single-head and dual-head exports must produce numerically
+    equivalent ``output0`` for the same model and input. This is the
+    guarantee that lets imgutils consumers freely pick either flavour."""
+
+    @pytest.mark.parametrize("yaml_name", [
+        "yolov8n.yaml",
+        "yolov8n-seg.yaml",
+        "yolo11n.yaml",
+    ])
+    def test_output0_numerical_parity(self, tmp_path, yaml_name, cpu):
+        # Need a deterministic init for the parity check, otherwise the two
+        # exports each load a fresh randomly-initialised YAML model.
+        torch.manual_seed(0)
+        model_a = YOLO(yaml_name)
+        torch.manual_seed(0)
+        model_b = YOLO(yaml_name)
+
+        a_path = tmp_path / "a_predict.onnx"
+        b_path = tmp_path / "b_dual.onnx"
+        export_yolo_to_onnx(
+            model_a, str(a_path),
+            imgsz=_IMGSZ_YOLO, opset_version=14,
+            dynamic=False, simplify=False, device=cpu,
+        )
+        export_yolo_to_onnx_with_embedding(
+            model_b, str(b_path),
+            imgsz=_IMGSZ_YOLO, opset_version=14,
+            dynamic=False, simplify=False, device=cpu,
+        )
+
+        sa = ort.InferenceSession(str(a_path), providers=["CPUExecutionProvider"])
+        sb = ort.InferenceSession(str(b_path), providers=["CPUExecutionProvider"])
+
+        x_np = np.random.randn(1, 3, _IMGSZ_YOLO, _IMGSZ_YOLO).astype(np.float32)
+        out_a = sa.run(["output0"], {"images": x_np})[0]
+        out_b = sb.run(["output0"], {"images": x_np})[0]
+        assert out_a.shape == out_b.shape
+        max_diff = float(np.abs(out_a - out_b).max())
+        assert max_diff < 1e-3, f"output0 parity failed: max|d|={max_diff}"

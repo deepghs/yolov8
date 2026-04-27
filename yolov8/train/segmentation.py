@@ -6,6 +6,7 @@ from ditk import logging
 from ultralytics import YOLO
 
 from ..utils import compute_threshold_data
+from ._threshold_callback import make_on_train_end_threshold_writer
 
 
 def train_segmentation(workdir: str, train_cfg: str, level: str = 's', yversion: Union[int, str] = 8,
@@ -33,6 +34,14 @@ def train_segmentation(workdir: str, train_cfg: str, level: str = 's', yversion:
         else:
             raise IsADirectoryError(f'train_cfg {train_cfg} is a directory, please given a configuration file.')
 
+    # See yolov8/train/object_detection.py for why we use a callback
+    # instead of a post-``model.train()`` block. ``kind='seg'`` matches
+    # what the legacy OCR path read out of ``MaskF1_curve.png``; the
+    # underlying helper falls back to bbox-level curves when mask
+    # metrics aren't available.
+    model.add_callback('on_train_end',
+                       make_on_train_end_threshold_writer(workdir, kind='seg'))
+
     # Train the model using the 'coco128.yaml' dataset for 3 epochs
     model.train(
         data=train_cfg,
@@ -47,18 +56,16 @@ def train_segmentation(workdir: str, train_cfg: str, level: str = 's', yversion:
         **kwargs
     )
 
-    # Capture the F1 / threshold curves from the validator while they
-    # are still in memory. We use the mask-level F1 (``kind='seg'``) to
-    # match what the legacy OCR path read out of MaskF1_curve.png; the
-    # helper falls back to the bbox-level curves if mask metrics are
-    # not available. Best-effort: any failure just skips threshold.json.
-    try:
-        threshold_data = compute_threshold_data(model, kind='seg')
-    except Exception as err:
-        logging.warning(f'compute_threshold_data failed: {err!r}; skipping threshold.json')
-        threshold_data = None
-    if threshold_data is not None:
-        threshold_path = os.path.join(workdir, 'threshold.json')
-        logging.info(f'Writing F1 / threshold metadata to {threshold_path!r}')
-        with open(threshold_path, 'w') as f:
-            json.dump(threshold_data, f, ensure_ascii=False, indent=4)
+    # Fallback for callback bypass; no-op when the callback already
+    # wrote threshold.json.
+    threshold_path = os.path.join(workdir, 'threshold.json')
+    if not os.path.exists(threshold_path):
+        try:
+            threshold_data = compute_threshold_data(model, kind='seg')
+        except Exception as err:
+            logging.warning(f'compute_threshold_data failed: {err!r}; skipping threshold.json')
+            threshold_data = None
+        if threshold_data is not None:
+            logging.info(f'Writing F1 / threshold metadata to {threshold_path!r}')
+            with open(threshold_path, 'w') as f:
+                json.dump(threshold_data, f, ensure_ascii=False, indent=4)

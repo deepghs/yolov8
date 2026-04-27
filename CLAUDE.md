@@ -155,12 +155,38 @@
 
 ### 1.7 Image embeddings & dual-head ONNX (internal)
 
-`yolov8/embed.py` and the `export_yolo_to_onnx_with_embedding(...)`
-function in `yolov8/onnx.py` together expose a way to obtain a 1D image
+`yolov8/embed.py` and the two ONNX export functions in `yolov8/onnx.py`
+(`export_yolo_to_onnx` for predict-only, `export_yolo_to_onnx_with_embedding`
+for the dual-head form) together expose a way to obtain a 1D image
 embedding from any Ultralytics-supported model object (YOLO/RTDETR/raw
-`BaseModel`) and to ship a dual-output ONNX (`predictions` + `embedding`).
-These are deliberately **not** re-exported from `yolov8/__init__.py` —
-treat them as an internal API while we evaluate the surface.
+`BaseModel`) and to ship ONNX graphs that downstream consumers like
+`deepghs/imgutils` can drop in on. These are deliberately **not**
+re-exported from `yolov8/__init__.py` — treat them as an internal API
+while we evaluate the surface.
+
+ONNX naming contract (verified against the default
+`YOLO.export(format='onnx')` on ultralytics 8.0.196 → 8.4.41 and used
+verbatim by `imgutils.generic.yolo` / `imgutils.generic.yoloseg`):
+
+- input  name: `images`, shape `[batch, 3, H, W]`
+- head outputs:
+  - detect / pose / obb / classify / rtdetr → `output0`
+  - segment → `output0` (boxes + mask coeffs) + `output1` (mask prototypes)
+- dual-head form appends `embedding` as the trailing output. The
+  `output0` (and `output1` when present) tensor is byte-equivalent to
+  what the predict-only export produces — exercised by
+  `test/test_embed.py::TestPredictParity`.
+
+Metadata. Both exports preserve every `metadata_props` key the upstream
+ultralytics exporter writes (`description` / `author` / `date` /
+`version` / `license` / `docs` / `stride` / `task` / `batch` / `imgsz`
+/ `names`) and add a `dghs.yolov8.*` namespace recording the package
+version, the exporter used, the input/output naming, and — for
+dual-head — the embedding's layer indices and dimension. When the
+source is a training workdir that contains a `threshold.json`, that
+file is embedded under `dghs.yolov8.threshold` so the resulting `.onnx`
+is fully self-describing. Callers may inject additional pairs via
+`extra_metadata=...`.
 
 Hidden constraints worth knowing before editing:
 
@@ -176,12 +202,50 @@ Hidden constraints worth knowing before editing:
   the head is what makes the ONNX graph emit a single tensor instead of
   the `(decoded, raw)` tuple eval-mode normally returns — mirror this if
   you add new export paths.
+- `export_yolo_to_onnx` writes directly to the user-given path via
+  `torch.onnx.export`; do **not** revert to the old
+  `model.export(format='onnx') + copy()` recipe — it depends on
+  ultralytics' internal "export next to ckpt_path" behaviour, which has
+  shifted across releases.
+- `_attach_metadata` runs **after** `_maybe_simplify`, because some
+  onnxsim versions strip `metadata_props` during graph rewriting.
+  Don't reorder.
 - The compatibility matrix is verified against ultralytics 8.0.196,
-  8.1.47, 8.2.103, 8.3.40, and 8.3.105 via `tmp_embed/compat_smoke.py`
-  in a sibling conda env (`yolov8-compat`). If you change either module
-  in a way that touches ultralytics internals, re-run the matrix in that
-  separate env — do **not** test in the primary `yolov8` env, which has
-  the latest ultralytics pinned and would mask 8.0.x regressions.
+  8.1.47, 8.2.103, 8.3.40, 8.3.105, 8.3.253 and 8.4.41 via
+  `tmp_embed/compat_smoke.py` in a sibling conda env (`yolov8-compat`).
+  If you change either module in a way that touches ultralytics
+  internals, re-run the matrix in that separate env — do **not** test
+  in the primary `yolov8` env, which has the latest ultralytics pinned
+  and would mask 8.0.x regressions. Note that on ult <8.1 the
+  underlying `Metric.update` does not store `f1_curve`/`px`, so
+  `threshold.json` extraction is structurally impossible there; the
+  smoke gracefully reports SKIP for that case.
+
+### 1.8 Threshold capture across early-stop / DDP
+
+`compute_threshold_data` reads `model.trainer.validator.metrics`. That
+attribute is populated by ultralytics' final-validation step *only* in
+the trainer process. Two situations break the post-`model.train()`
+extraction:
+
+* **Patience exhaustion / time-budget early-stop.** ultralytics breaks
+  the training loop early, then runs final-validation on `best.pt` and
+  fires `on_train_end`. The `model.train()` call still returns and the
+  metrics are present — but only because we keep the wrapper alive long
+  enough to read them.
+* **Multi-GPU / DDP.** `BaseTrainer.train()` calls
+  `subprocess.run(generate_ddp_command(...))`. The actual training
+  happens in a child process; the parent's `model.trainer.validator.metrics`
+  was instantiated *before* the child started and is never repopulated.
+  Post-`model.train()` extraction in the parent silently no-ops.
+
+Mitigation: `train_object_detection` / `train_segmentation` register an
+`on_train_end` callback (see `yolov8/train/_threshold_callback.py`)
+that calls `compute_threshold_data_from_trainer(trainer)` and writes
+`threshold.json` from inside the trainer process, so the file lands on
+disk regardless of how training terminates. The post-train block is
+kept as a safety net but only acts if `threshold.json` doesn't already
+exist (i.e. the callback didn't fire). Do **not** remove either path.
 
 ---
 

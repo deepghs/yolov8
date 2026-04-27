@@ -6,6 +6,7 @@ from ditk import logging
 from ultralytics import YOLO, RTDETR
 
 from ..utils import compute_threshold_data
+from ._threshold_callback import make_on_train_end_threshold_writer
 
 
 def train_object_detection(workdir: str, train_cfg: str, level: str = 's', yversion: Union[int, str] = 8,
@@ -34,6 +35,16 @@ def train_object_detection(workdir: str, train_cfg: str, level: str = 's', yvers
         else:
             raise IsADirectoryError(f'train_cfg {train_cfg} is a directory, please given a configuration file.')
 
+    # Register an on_train_end callback that writes threshold.json from
+    # inside the trainer process. This is the only call site that
+    # reliably has populated metrics: it fires after the trainer's final
+    # validation pass regardless of how training terminates (normal end,
+    # patience exhaustion, time budget) and runs in the trainer's own
+    # process, so it works for multi-GPU / DDP runs where the main
+    # process never sees the metrics. See _threshold_callback.py.
+    model.add_callback('on_train_end',
+                       make_on_train_end_threshold_writer(workdir, kind='box'))
+
     # Train the model using the 'coco128.yaml' dataset for 3 epochs
     model.train(
         data=train_cfg,
@@ -48,17 +59,18 @@ def train_object_detection(workdir: str, train_cfg: str, level: str = 's', yvers
         **kwargs
     )
 
-    # Capture the F1 / threshold curves from the validator while they
-    # are still in memory. Best-effort: any failure here just skips
-    # threshold.json — exactly the same behaviour as when the legacy
-    # OCR path could not parse a plot title.
-    try:
-        threshold_data = compute_threshold_data(model, kind='box')
-    except Exception as err:
-        logging.warning(f'compute_threshold_data failed: {err!r}; skipping threshold.json')
-        threshold_data = None
-    if threshold_data is not None:
-        threshold_path = os.path.join(workdir, 'threshold.json')
-        logging.info(f'Writing F1 / threshold metadata to {threshold_path!r}')
-        with open(threshold_path, 'w') as f:
-            json.dump(threshold_data, f, ensure_ascii=False, indent=4)
+    # Fallback: if the on_train_end callback did not produce
+    # threshold.json (e.g. the user wired up a custom trainer that
+    # bypasses the callback), try the post-train read once more. This is
+    # a no-op when the callback already wrote the file.
+    threshold_path = os.path.join(workdir, 'threshold.json')
+    if not os.path.exists(threshold_path):
+        try:
+            threshold_data = compute_threshold_data(model, kind='box')
+        except Exception as err:
+            logging.warning(f'compute_threshold_data failed: {err!r}; skipping threshold.json')
+            threshold_data = None
+        if threshold_data is not None:
+            logging.info(f'Writing F1 / threshold metadata to {threshold_path!r}')
+            with open(threshold_path, 'w') as f:
+                json.dump(threshold_data, f, ensure_ascii=False, indent=4)
