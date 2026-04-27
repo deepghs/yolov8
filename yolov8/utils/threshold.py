@@ -292,12 +292,26 @@ def compute_threshold_data(model: Any, *, kind: str = 'box') -> Optional[dict]:
         if payload is not None:
             return payload
 
+    # Path 2: after a stand-alone validation (``model.val(...)``) the
+    # ``DetMetrics``-like object lives directly on ``model.metrics``,
+    # not under any trainer. This is the recovery path used by the
+    # DDP fallback in :mod:`yolov8.train.object_detection` /
+    # :mod:`~yolov8.train.segmentation`: ult's subprocess.run-based
+    # DDP launcher discards user callbacks, so the parent's trainer
+    # never sees populated metrics; we re-validate the best ckpt and
+    # read the curves off ``model.metrics`` here.
+    m_metrics = getattr(model, 'metrics', None)
+    if m_metrics is not None and (hasattr(m_metrics, 'box') or hasattr(m_metrics, 'seg')):
+        payload = _payload_from_metrics(m_metrics, kind=kind, names=names)
+        if payload is not None:
+            return payload
+
     if validator is not None:
         payload = compute_threshold_data_from_validator_stats(validator, names=names)
         if payload is not None:
             return payload
 
-    if metrics is not None or validator is not None:
+    if metrics is not None or validator is not None or m_metrics is not None:
         _warn_old_ultralytics()
     return None
 

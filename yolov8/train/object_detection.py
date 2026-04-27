@@ -7,6 +7,7 @@ from ultralytics import YOLO, RTDETR
 
 from ..utils import compute_threshold_data
 from ._threshold_callback import make_on_train_end_threshold_writer
+from ._threshold_recovery import recover_threshold_via_val
 
 
 def train_object_detection(workdir: str, train_cfg: str, level: str = 's', yversion: Union[int, str] = 8,
@@ -88,13 +89,14 @@ def train_object_detection(workdir: str, train_cfg: str, level: str = 's', yvers
         else:
             raise IsADirectoryError(f'train_cfg {train_cfg} is a directory, please given a configuration file.')
 
-    # Register an on_train_end callback that writes threshold.json from
-    # inside the trainer process. This is the only call site that
-    # reliably has populated metrics: it fires after the trainer's final
-    # validation pass regardless of how training terminates (normal end,
-    # patience exhaustion, time budget) and runs in the trainer's own
-    # process, so it works for multi-GPU / DDP runs where the main
-    # process never sees the metrics. See _threshold_callback.py.
+    # Register an on_train_end callback that writes threshold.json
+    # from inside the trainer process. This handles single-GPU /
+    # patience-exhaustion / time-budget early stop reliably. It does
+    # NOT cover multi-GPU DDP: ult's DDP launcher
+    # (``ultralytics.utils.dist.generate_ddp_command``) starts a
+    # subprocess that rebuilds the trainer purely from
+    # ``vars(trainer.args)`` and discards every user-attached
+    # callback. The recovery block below catches that case.
     model.add_callback('on_train_end',
                        make_on_train_end_threshold_writer(workdir, kind='box'))
 
@@ -112,18 +114,30 @@ def train_object_detection(workdir: str, train_cfg: str, level: str = 's', yvers
         **kwargs
     )
 
-    # Fallback: if the on_train_end callback did not produce
-    # threshold.json (e.g. the user wired up a custom trainer that
-    # bypasses the callback), try the post-train read once more. This is
-    # a no-op when the callback already wrote the file.
+    # In-memory fallback: covers the rare case where the callback was
+    # bypassed but metrics are still attached to the wrapper (e.g. a
+    # custom trainer subclass that skips on_train_end). No-op when
+    # the callback already wrote the file.
     threshold_path = os.path.join(workdir, 'threshold.json')
     if not os.path.exists(threshold_path):
         try:
             threshold_data = compute_threshold_data(model, kind='box')
         except Exception as err:
-            logging.warning(f'compute_threshold_data failed: {err!r}; skipping threshold.json')
+            logging.warning(f'compute_threshold_data failed: {err!r}; '
+                            f'will try DDP recovery instead')
             threshold_data = None
         if threshold_data is not None:
             logging.info(f'Writing F1 / threshold metadata to {threshold_path!r}')
             with open(threshold_path, 'w') as f:
                 json.dump(threshold_data, f, ensure_ascii=False, indent=4)
+
+    # DDP recovery: if both the callback and the in-memory fallback
+    # came up empty, the run was almost certainly multi-GPU and the
+    # subprocess workers never saw our callback. Re-validate
+    # ``best.pt`` in-process to materialise the curves we need.
+    is_rtdetr = isinstance(model, RTDETR)
+    recover_threshold_via_val(
+        workdir, train_cfg,
+        kind='box', is_rtdetr=is_rtdetr,
+        val_device=kwargs.get('device'),
+    )

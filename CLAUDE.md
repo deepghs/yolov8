@@ -251,13 +251,41 @@ extraction:
   was instantiated *before* the child started and is never repopulated.
   Post-`model.train()` extraction in the parent silently no-ops.
 
-Mitigation: `train_object_detection` / `train_segmentation` register an
-`on_train_end` callback (see `yolov8/train/_threshold_callback.py`)
-that calls `compute_threshold_data_from_trainer(trainer)` and writes
-`threshold.json` from inside the trainer process, so the file lands on
-disk regardless of how training terminates. The post-train block is
-kept as a safety net but only acts if `threshold.json` doesn't already
-exist (i.e. the callback didn't fire). Do **not** remove either path.
+Mitigation has two layers:
+
+1. `train_object_detection` / `train_segmentation` register an
+   `on_train_end` callback (see `yolov8/train/_threshold_callback.py`)
+   that calls `compute_threshold_data_from_trainer(trainer)` and
+   writes `threshold.json` from inside the trainer process. This
+   handles single-GPU runs reliably — the callback fires after the
+   trainer's final-validation step regardless of how training
+   terminated (normal end, patience exhaustion, time budget).
+2. **DDP recovery** (see `yolov8/train/_threshold_recovery.py`): when
+   step 1 doesn't produce the file (the multi-GPU case described
+   above), `recover_threshold_via_val(workdir, train_cfg, ...)` loads
+   `weights/best.pt` and runs an in-process `model.val(...)` — that
+   call sets `model.metrics` to a `DetMetrics`-like object, which
+   `compute_threshold_data` then reads (it now also accepts
+   `model.metrics` as a source, not just `model.trainer.validator.metrics`).
+
+The recovery step collapses any `device=[0,1,...]` argument to its
+first element before calling `val(...)`: a multi-element list there
+would re-trigger ult's `subprocess.run`-based DDP launcher and we'd
+lose our callback again, defeating the recovery. Don't remove that
+collapsing.
+
+Verified scenarios (smoke runs against coco8 in `tmp_embed/`):
+
+* **Single-GPU + normal end** — `on_train_end` callback writes the
+  file in-process. Recovery no-ops because the file already exists.
+* **8-GPU DDP + patience early-stop** — callback discarded by the
+  subprocess; in-memory fallback empty; recovery re-validates
+  `best.pt` and writes the file.
+* **8-GPU DDP + normal end** — same recovery path.
+
+Do **not** remove any of: the `on_train_end` callback registration,
+the in-memory fallback, or the recovery call. They're three distinct
+nets covering three distinct failure modes.
 
 The :func:`compute_threshold_data` family also has a third entry point —
 `compute_threshold_data_from_validator_stats` — that recomputes the F1

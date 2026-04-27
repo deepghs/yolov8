@@ -7,6 +7,7 @@ from ultralytics import YOLO
 
 from ..utils import compute_threshold_data
 from ._threshold_callback import make_on_train_end_threshold_writer
+from ._threshold_recovery import recover_threshold_via_val
 
 
 def train_segmentation(workdir: str, train_cfg: str, level: str = 's', yversion: Union[int, str] = 8,
@@ -94,16 +95,25 @@ def train_segmentation(workdir: str, train_cfg: str, level: str = 's', yversion:
         **kwargs
     )
 
-    # Fallback for callback bypass; no-op when the callback already
-    # wrote threshold.json.
+    # In-memory fallback for callback bypass; no-op when the callback
+    # already wrote the file. See yolov8/train/object_detection.py
+    # for the DDP-recovery rationale.
     threshold_path = os.path.join(workdir, 'threshold.json')
     if not os.path.exists(threshold_path):
         try:
             threshold_data = compute_threshold_data(model, kind='seg')
         except Exception as err:
-            logging.warning(f'compute_threshold_data failed: {err!r}; skipping threshold.json')
+            logging.warning(f'compute_threshold_data failed: {err!r}; '
+                            f'will try DDP recovery instead')
             threshold_data = None
         if threshold_data is not None:
             logging.info(f'Writing F1 / threshold metadata to {threshold_path!r}')
             with open(threshold_path, 'w') as f:
                 json.dump(threshold_data, f, ensure_ascii=False, indent=4)
+
+    # DDP recovery (see object_detection.py for full rationale).
+    recover_threshold_via_val(
+        workdir, train_cfg,
+        kind='seg', is_rtdetr=False,
+        val_device=kwargs.get('device'),
+    )
