@@ -106,13 +106,25 @@
 | Purpose | Command |
 | --- | --- |
 | Train (library API) | `from yolov8.train import train_object_detection, train_segmentation` |
-| Local zip export | `python -m yolov8.export -w runs/<task>` |
-| Publish to HuggingFace | `HF_TOKEN=... python -m yolov8.publish huggingface -w runs/<task> -r <user>/<repo>` |
+| Train (CLI, detect) | `python -m yolov8.train detect -d <dataset.yaml>` (defaults to yolo11s) |
+| Train (CLI, segment) | `python -m yolov8.train segment -d <dataset.yaml>` |
+| Local zip export | `python -m yolov8.export -w runs/<task> [--with-embedding]` |
+| Publish to HuggingFace | `HF_TOKEN=... python -m yolov8.publish huggingface -w runs/<task> -r <user>/<repo> [--with-embedding]` |
 | Publish to Roboflow | `ROBOFLOW_APIKEY=... python -m yolov8.publish roboflow -w runs/<task> -p <ws>/<proj> -v <ver>` |
 | Refresh HF README table | `python -m yolov8.list -r <user>/<repo>` |
 | Unit tests | `make unittest` (or `pytest test/...` directly) |
 | Build docs | `make docs` / `make pdocs` (needs `requirements-doc.txt`) |
 | Line count | `./cloc.sh [--loc|--comments|--percentage]` |
+
+The train CLI follows convention-over-configuration: only `-d` is
+required, and `runs/<dataset_basename>_yolo<yversion><level>` is the
+default workdir. Extra Ultralytics ``model.train(...)`` keywords are
+expressible with repeatable `-p KEY=VALUE` whose values are
+JSON-decoded when possible (`-p batch=16`, `-p device=[0,1,2,3]`,
+`-p cos_lr=true`, `-p optimizer=AdamW`). Single source of truth for
+the parser: `yolov8.utils.parse_hyperparams` in `yolov8/utils/cli.py`
+— add new CLIs on top of that helper rather than reimplementing the
+KEY=VALUE format.
 
 > ⚠️ **Makefile caveat**: `SRC_DIR := ./imgutils` is **leftover from a
 > template** and is wrong for this repo (the package is `yolov8`).

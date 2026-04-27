@@ -7,7 +7,7 @@ Overview:
 __TITLE__ = 'yolov8'
 
 #: Version of this project.
-__VERSION__ = '0.0.4'
+__VERSION__ = '0.0.5'
 
 #: Short description of the project, will be included in ``setup.py``.
 __DESCRIPTION__ = 'Tools for training yolov8 models.'
