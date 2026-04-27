@@ -19,14 +19,17 @@ from importlib import import_module
 # Eager: pure stdlib + click, cheap.
 from .cli import (
     GLOBAL_CONTEXT_SETTINGS,
+    parse_yversion,
+    print_version,
+)
+from .parser import (
     ParseError,
     fraction,
     hyperparam_callback,
     hyperparam_callback_factory,
     parse_hyperparam,
     parse_hyperparams,
-    parse_yversion,
-    print_version,
+    parse_value,
     yolo_train_param_schema,
 )
 
