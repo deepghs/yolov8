@@ -247,6 +247,67 @@ disk regardless of how training terminates. The post-train block is
 kept as a safety net but only acts if `threshold.json` doesn't already
 exist (i.e. the callback didn't fire). Do **not** remove either path.
 
+The :func:`compute_threshold_data` family also has a third entry point —
+`compute_threshold_data_from_validator_stats` — that recomputes the F1
+curve from the validator's accumulated `stats` list. ultralytics <8.1
+computes the curve inside `ap_per_class` and discards it before
+returning, so on those versions the modern attribute path
+(`metric.box.f1_curve` / `.px`) returns empty. The
+`*_from_validator_stats` fallback gives us the same curve numerically
+without touching ultralytics internals further.
+
+When *both* paths fail (no metrics object **and** no usable stats),
+the helper logs a single descriptive `WARNING` that names the
+installed ultralytics version and points at upgrading to >=8.1; this
+is the only situation in which a training-time threshold capture can
+silently fail.
+
+### 1.9 Docstring convention (hard rule for `yolov8/`)
+
+Every public function, class, and method under `yolov8/*` uses
+**reStructuredText** docstrings with the field-list style:
+
+```rst
+"""One-line summary.
+
+Optional longer prose, blank-line-separated paragraphs.
+
+:param name: ...
+:type name: type
+:param other: ...
+:type other: type
+:returns: ...
+:rtype: type
+:raises SomeError: ...
+
+Example::
+
+    >>> from yolov8.foo import bar
+    >>> bar(...)
+    expected_repr
+"""
+```
+
+Hard rules:
+
+- ASCII-only (no CJK, no smart quotes).
+- Use `:param x:` / `:type x:` / `:returns:` / `:rtype:` /
+  `:raises:`. Don't mix in NumPy-style `Parameters` headers or
+  Google-style `Args:` blocks.
+- Every public symbol gets an `Example::` block with one or more
+  `>>> ` doctest lines that demonstrate the API surface; the example
+  doesn't have to be doctest-runnable end-to-end (network, big
+  weights), but the call must be syntactically valid.
+- Private helpers (leading underscore) may keep a one-paragraph
+  summary; the field list is optional there.
+- Module-level docstrings describe the module's purpose and link to
+  the public symbols with `:func:` / `:class:` / `:mod:` cross-refs
+  where it helps.
+
+When you add or refactor a function under `yolov8/`, fix its docstring
+to match this convention in the same patch — don't ship a public API
+without one.
+
 ---
 
 ## 2. Agent operating rules

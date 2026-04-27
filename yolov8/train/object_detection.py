@@ -11,6 +11,59 @@ from ._threshold_callback import make_on_train_end_threshold_writer
 
 def train_object_detection(workdir: str, train_cfg: str, level: str = 's', yversion: Union[int, str] = 8,
                            max_epochs: int = 200, batch: int = 16, pretrained: Optional[str] = None, **kwargs):
+    """Train an Ultralytics detection model (YOLO or RT-DETR) into ``workdir``.
+
+    Convenience wrapper that picks the right ``YOLO`` / ``RTDETR``
+    family + size from arguments, sets up the standard training layout
+    (``weights/``, ``runs/``, etc.), wires up the ``on_train_end``
+    threshold-writer callback (see
+    :mod:`yolov8.train._threshold_callback`), and forwards everything
+    else to ``model.train(...)``. If ``weights/last.pt`` already
+    exists in ``workdir``, training auto-resumes.
+
+    :param workdir: Directory that will hold the run output. Created
+        if missing. Its basename becomes the run ``name`` and its
+        parent the run ``project``.
+    :type workdir: str
+    :param train_cfg: Path to a dataset YAML, or a directory containing
+        ``data.yaml`` / ``data.yml``.
+    :type train_cfg: str
+    :param level: Size suffix - ``"n"`` / ``"s"`` / ``"m"`` / ``"l"``
+        / ``"x"``. Combined with ``yversion`` to pick the pretrained
+        ckpt name (e.g. ``yolov8s.pt``).
+    :type level: str
+    :param yversion: YOLO family selector. Integer ``8`` / ``9`` / ...
+        or the string ``"rtdetr"`` to pick RT-DETR. Strings ``"11"``
+        / ``"12"`` use the no-``v`` naming Ultralytics introduced for
+        v11+.
+    :type yversion: int or str
+    :param max_epochs: Maximum epochs. ``patience=`` (passed via
+        ``**kwargs``) may end training earlier.
+    :type max_epochs: int
+    :param batch: Per-device batch size.
+    :type batch: int
+    :param pretrained: Override for the pretrained-checkpoint source.
+        Either a ``.pt`` path or a previous workdir (in which case
+        ``<dir>/weights/best.pt`` is used). ``None`` falls back to the
+        canonical Ultralytics name derived from ``yversion`` / ``level``.
+    :type pretrained: str or None
+    :param kwargs: Forwarded verbatim to ``model.train(...)``. Anything
+        Ultralytics' trainer accepts (``device``, ``patience``,
+        ``imgsz``, ``optimizer``, ...) is honoured here.
+
+    Example::
+
+        >>> from yolov8.train import train_object_detection
+        >>> # Tiny smoke-train against coco8 with patience=1:
+        >>> train_object_detection(
+        ...     workdir="runs/smoke",
+        ...     train_cfg="coco8.yaml",
+        ...     level="n",
+        ...     max_epochs=3,
+        ...     batch=4,
+        ...     patience=1,
+        ... )
+    """
     logging.try_init_root(logging.INFO)
 
     # Load a pretrained YOLO model (recommended for training)

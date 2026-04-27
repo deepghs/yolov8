@@ -27,6 +27,33 @@ from .utils import GLOBAL_CONTEXT_SETTINGS, float_pe, markdown_to_df
 @click.option('--revision', '-R', 'revision', type=str, default='main',
               help='Revision for pushing the model.', show_default=True)
 def list_(repository: str, revision: str = 'main'):
+    """Aggregate every published model under ``repository`` into a
+    single README table.
+
+    Walks every ``*/model.pt`` in the HF model repo, reads
+    ``model_type.json`` / ``threshold.json`` / ``F1_curve.png`` /
+    ``confusion_matrix*.png`` if present, recomputes FLOPS and params,
+    and writes the resulting table back to ``README.md`` (replacing any
+    existing detection-style table whose header contains
+    ``Model / FLOPS / Params / Labels``).
+
+    The CLI usage is the same as the function arguments::
+
+        python -m yolov8.list -r <user>/<repo> [-R <revision>]
+
+    :param repository: HuggingFace repo id, e.g. ``deepghs/foo``.
+    :type repository: str
+    :param revision: Branch / tag / SHA to read and re-write. Defaults
+        to ``"main"``.
+    :type revision: str
+
+    Example::
+
+        >>> # CLI form (preferred):
+        >>> #   python -m yolov8.list -r deepghs/anime_object
+        >>> from yolov8.list import list_
+        >>> # ``HF_TOKEN`` must be set for the upload step.
+    """
     logging.try_init_root(logging.INFO)
     rows = []
     hf_fs = get_hf_fs()

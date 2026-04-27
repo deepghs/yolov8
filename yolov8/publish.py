@@ -35,13 +35,57 @@ def cli():
               help='Revision for pushing the model.', show_default=True)
 @click.option('--opset_version', 'opset_version', type=int, default=14,
               help='Version of OP set.', show_default=True)
+@click.option('--with-embedding/--no-embedding', 'with_embedding', default=False,
+              show_default=True,
+              help='Also publish model_with_embedding.onnx alongside '
+                   'model.onnx. The dual-head ONNX has an additional '
+                   '"embedding" output for retrieval / dedup / FAISS use; '
+                   'consumers that only need the detection head can keep '
+                   'using model.onnx (output names are unchanged).')
 @click.option('--dry-run', 'dry_run', is_flag=True, default=False,
               help='Run the export pipeline and report the upload manifest, '
                    'but do not create the HF repo or commit. HF_TOKEN is not '
                    'required in this mode.')
 def huggingface(workdir: str, name: Optional[str],
                 repository: str, revision: str, opset_version: int = 14,
+                with_embedding: bool = False,
                 dry_run: bool = False):
+    """Bundle a workdir's best checkpoint and upload it to a HF model repo.
+
+    Materialises the same export bundle that
+    :func:`yolov8.export.export_model_from_workdir` produces (anonymised
+    ``best.pt``, ``model.onnx`` with full ult / dghs metadata + an
+    embedded ``threshold.json``, plot/metrics PNGs, ...) into a
+    temporary directory, then commits everything under
+    ``<repository>/<name>/`` on the chosen branch. ``--with-embedding``
+    additionally publishes ``model_with_embedding.onnx`` from
+    :func:`yolov8.onnx.export_yolo_to_onnx_with_embedding`.
+
+    :param workdir: Source training directory.
+    :type workdir: str
+    :param name: Display name. Defaults to the workdir's basename.
+    :type name: str or None
+    :param repository: HF model repo, e.g. ``deepghs/anime_object_yolo``.
+    :type repository: str
+    :param revision: Branch / tag / SHA to commit onto.
+    :type revision: str
+    :param opset_version: ONNX opset for the exported graph.
+    :type opset_version: int
+    :param with_embedding: Also publish a dual-head ONNX with an
+        ``embedding`` output for retrieval / dedup / FAISS.
+    :type with_embedding: bool
+    :param dry_run: Report the upload manifest but skip repo
+        creation and the actual commit. ``HF_TOKEN`` is not needed
+        in this mode.
+    :type dry_run: bool
+
+    Example::
+
+        >>> # CLI form:
+        >>> #   HF_TOKEN=... python -m yolov8.publish huggingface \\
+        >>> #       -w runs/my_train -r deepghs/foo --with-embedding
+        >>> from yolov8.publish import huggingface  # the click callback
+    """
     logging.try_init_root(logging.INFO)
 
     if dry_run:
@@ -53,7 +97,15 @@ def huggingface(workdir: str, name: Optional[str],
 
     with TemporaryDirectory() as td:
         name = name or os.path.basename(os.path.abspath(workdir))
-        files = export_model_from_workdir(workdir, td, name, opset_version=opset_version)
+        # threshold.json is now also embedded inside model.onnx's
+        # metadata_props (under ``dghs.yolov8.threshold``) by
+        # export_yolo_to_onnx, so the on-HF artifact is self-describing.
+        # We still ship the sidecar threshold.json for backwards
+        # compatibility with HF readers that expected it as a top-level
+        # file - export_model_from_workdir handles that.
+        files = export_model_from_workdir(workdir, td, name,
+                                           opset_version=opset_version,
+                                           with_embedding=with_embedding)
 
         if dry_run:
             total = 0
@@ -92,6 +144,30 @@ def huggingface(workdir: str, name: Optional[str],
 @click.option('--version', '-v', 'version', type=int, required=True,
               help='Version in project.', show_default=True)
 def roboflow(workdir: str, project: str, version: int):
+    """Deploy a workdir to a Roboflow project version (legacy path).
+
+    Optional integration: requires the ``roboflow`` package, which is
+    not in the main requirements. Install via
+    ``pip install -r requirements-roboflow.txt`` (this also downgrades
+    ultralytics to 8.0.196 for Roboflow SDK compatibility).
+
+    :param workdir: Source training directory.
+    :type workdir: str
+    :param project: Roboflow project path of the form
+        ``<workspace>/<project>``.
+    :type project: str
+    :param version: Project version number to deploy to.
+    :type version: int
+    :raises click.ClickException: If the optional ``roboflow``
+        package is not installed.
+
+    Example::
+
+        >>> # CLI form:
+        >>> #   ROBOFLOW_APIKEY=... python -m yolov8.publish roboflow \\
+        >>> #       -w runs/my_train -p ws/proj -v 3
+        >>> from yolov8.publish import roboflow  # click callback
+    """
     logging.try_init_root(logging.INFO)
 
     try:

@@ -41,15 +41,35 @@ ImageLike = Union[str, os.PathLike, np.ndarray, torch.Tensor, "list", "tuple"]
 # ---------------------------------------------------------------------------
 
 def resolve_inner(model) -> nn.Module:
-    """Return the underlying ``BaseModel`` ``nn.Module`` from any Ultralytics
-    wrapper or raw model.
+    """Return the underlying ``BaseModel`` ``nn.Module`` from any
+    Ultralytics wrapper or raw model.
 
-    Both ``ultralytics.YOLO`` and ``ultralytics.RTDETR`` expose the inner
-    network as ``wrapper.model`` (an ``nn.Module``). Raw ``BaseModel``
-    subclasses *also* have a ``.model`` attribute, but theirs is the
-    ``nn.ModuleList`` of layers, not an ``nn.Module``. We disambiguate by
-    inspecting whether the candidate has its own ``predict`` method - the
-    inner ``BaseModel`` does, the layer ``ModuleList`` does not.
+    Both ``ultralytics.YOLO`` and ``ultralytics.RTDETR`` expose the
+    inner network as ``wrapper.model`` (an ``nn.Module``). Raw
+    ``BaseModel`` subclasses *also* have a ``.model`` attribute, but
+    theirs is the ``nn.ModuleList`` of layers, not an ``nn.Module``.
+    We disambiguate by inspecting whether the candidate has its own
+    ``predict`` method - the inner ``BaseModel`` does, the layer
+    ``ModuleList`` does not.
+
+    :param model: Any of ``ultralytics.YOLO``, ``ultralytics.RTDETR``,
+        a raw ``BaseModel``-style instance, or anything exposing
+        ``.model`` whose value satisfies the protocol described above.
+    :type model: ultralytics.YOLO or ultralytics.RTDETR or
+        torch.nn.Module
+    :returns: The inner ``BaseModel`` instance (an ``nn.Module``).
+    :rtype: torch.nn.Module
+    :raises TypeError: When ``model`` does not look like any of the
+        accepted shapes.
+
+    Example::
+
+        >>> from ultralytics import YOLO
+        >>> from yolov8.embed import resolve_inner
+        >>> wrapper = YOLO("yolov8n.pt")
+        >>> inner = resolve_inner(wrapper)
+        >>> hasattr(inner, "predict")
+        True
     """
     candidate = getattr(model, "model", model)
     # ``BaseModel`` (and all Ultralytics task models) define ``predict``;
@@ -66,8 +86,26 @@ def resolve_inner(model) -> nn.Module:
 
 
 def default_embed_indices(inner: nn.Module) -> list[int]:
-    """Same default as ``ultralytics.engine.model.Model.embed`` -
-    the layer just before the head."""
+    """Return the default embed-layer index list: the head's
+    immediately-preceding layer.
+
+    Matches the default of ``ultralytics.engine.model.Model.embed`` -
+    the last neck layer, which after pooling gives a single
+    ``[B, channels]`` feature vector.
+
+    :param inner: Inner ``BaseModel`` (use :func:`resolve_inner` to get
+        one from a wrapper).
+    :type inner: torch.nn.Module
+    :returns: ``[len(inner.model) - 2]``.
+    :rtype: list[int]
+
+    Example::
+
+        >>> from ultralytics import YOLO
+        >>> from yolov8.embed import default_embed_indices, resolve_inner
+        >>> default_embed_indices(resolve_inner(YOLO("yolov8n.pt")))
+        [21]
+    """
     return [len(inner.model) - 2]
 
 
@@ -151,24 +189,48 @@ def get_embedding(model,
                   device: torch.device | str | None = None) -> torch.Tensor:
     """Return ``[N, D]`` image embeddings from any Ultralytics model object.
 
-    :param model:          ``ultralytics.YOLO`` / ``ultralytics.RTDETR`` /
-                           raw ``BaseModel`` instance.
-    :param source:         image path, list of paths, ``np.ndarray``
-                           (HWC/NHWC BGR uint8), or preprocessed
-                           ``torch.Tensor`` ``[N,3,H,W]``.
-    :param layer_indices:  layers to pool & concat. ``None`` → second-to-last.
-    :param imgsz:          input letterbox size when ``source`` is path /
-                           ndarray. Ignored for tensor inputs.
-    :param normalize:      L2-normalise each row of the output.
-    :param device:         where to run. ``None`` → keep the model's current
-                           device.
+    The output dim ``D`` equals the sum of channels of the requested
+    layers' feature maps after ``adaptive_avg_pool2d``. For RT-DETR /
+    WorldModel / classification heads this works without any
+    special-casing — internally it routes through :class:`EmbedHead`,
+    which re-implements the embed branch of
+    ``BaseModel._predict_once`` and is therefore independent of the
+    ultralytics ``predict(..., embed=...)`` keyword (added in ~8.1).
 
-    Notes:
-        * The output dim ``D`` equals the sum of channels of the requested
-          layers' feature maps after ``adaptive_avg_pool2d``.
-        * For RT-DETR / WorldModel / classification heads the same
-          ``predict(x, embed=...)`` interface applies; this function works
-          for all of them without any special-casing.
+    :param model: ``ultralytics.YOLO`` / ``ultralytics.RTDETR`` wrapper,
+        or a raw ``BaseModel`` instance.
+    :type model: ultralytics.YOLO or ultralytics.RTDETR or
+        torch.nn.Module
+    :param source: An image path, a list of paths, an ``np.ndarray``
+        (HWC or NHWC BGR uint8), or a preprocessed ``torch.Tensor``
+        of shape ``[N, 3, H, W]``.
+    :type source: str or os.PathLike or numpy.ndarray or torch.Tensor
+        or list or tuple
+    :param layer_indices: Layers to pool & concat for the embedding.
+        ``None`` selects the second-to-last layer (the same default
+        as ``ultralytics.YOLO.embed()``).
+    :type layer_indices: Iterable[int] or None
+    :param imgsz: Input letterbox size when ``source`` is a path /
+        ndarray. Ignored for tensor inputs.
+    :type imgsz: int
+    :param normalize: When ``True``, L2-normalise each row of the
+        output (``||row||₂ == 1``).
+    :type normalize: bool
+    :param device: Where to run. ``None`` keeps the model's current
+        device.
+    :type device: torch.device or str or None
+    :returns: Tensor of shape ``[N, D]`` with one row per input image.
+    :rtype: torch.Tensor
+    :raises ValueError: If ``layer_indices`` is empty or out of range.
+
+    Example::
+
+        >>> from ultralytics import YOLO
+        >>> from yolov8.embed import get_embedding
+        >>> model = YOLO("yolov8n.pt")
+        >>> emb = get_embedding(model, "bus.jpg", normalize=True)
+        >>> emb.shape, float(emb.norm(dim=-1)[0])
+        (torch.Size([1, 256]), 1.0)
     """
     inner = resolve_inner(model)
     if device is not None:
@@ -207,13 +269,31 @@ def get_embedding(model,
 
 
 class EmbedHead(nn.Module):
-    """Re-implements ``BaseModel._predict_once``'s embed branch as a static,
-    traceable ``nn.Module``.
+    """Static, traceable rewrite of the embed branch of
+    ``BaseModel._predict_once``.
 
-    Used internally by :func:`yolov8.onnx.export_yolo_to_onnx_with_embedding`
-    for the embedding-output side of the dual-head ONNX, and exposed here so
-    callers who want a pure-PyTorch embedding-only graph (no head) can reuse
-    it without rebuilding the layer-walk loop themselves.
+    Used internally by
+    :func:`yolov8.onnx.export_yolo_to_onnx_with_embedding` to provide
+    the embedding side of the dual-head ONNX, and exposed here so
+    callers who want a pure-PyTorch embedding-only graph (no head)
+    can reuse it without rebuilding the layer-walk loop themselves.
+
+    :param inner: Inner ``BaseModel`` instance. Use
+        :func:`resolve_inner` to obtain one from a wrapper.
+    :type inner: torch.nn.Module
+    :param layer_indices: Layer indices to pool & concat. ``None``
+        falls back to :func:`default_embed_indices`.
+    :type layer_indices: Sequence[int] or None
+
+    Example::
+
+        >>> from ultralytics import YOLO
+        >>> from yolov8.embed import EmbedHead, resolve_inner
+        >>> import torch
+        >>> inner = resolve_inner(YOLO("yolov8n.pt"))
+        >>> head = EmbedHead(inner)
+        >>> head(torch.randn(1, 3, 640, 640)).shape
+        torch.Size([1, 256])
     """
 
     def __init__(self, inner: nn.Module, layer_indices: Sequence[int] | None = None):

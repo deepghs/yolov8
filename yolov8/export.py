@@ -13,7 +13,7 @@ from ditk import logging
 from hbutils.encoding import sha3
 from ultralytics import YOLO, RTDETR
 
-from .onnx import export_yolo_to_onnx
+from .onnx import export_yolo_to_onnx, export_yolo_to_onnx_with_embedding
 from .utils import GLOBAL_CONTEXT_SETTINGS, derive_model_meta
 from .utils import print_version as _origin_print_version
 
@@ -42,7 +42,65 @@ _LOG_FILE_PATTERN = re.compile(r'^events\.out\.tfevents\.(?P<timestamp>\d+)\.(?P
 
 
 def export_model_from_workdir(workdir, export_dir, name: Optional[str] = None,
-                              opset_version: int = 14, logfile_anonymous: bool = True) -> List[Tuple[str, str]]:
+                              opset_version: int = 14, logfile_anonymous: bool = True,
+                              with_embedding: bool = False,
+                              embedding_layer_indices: Optional[list] = None
+                              ) -> List[Tuple[str, str]]:
+    """Materialise an upload-ready bundle from a finished training workdir.
+
+    Walks ``workdir``, copies + anonymises ``weights/best.pt``, derives
+    ``(model_type, problem_type)`` from the embedded class name,
+    exports an ONNX (and optionally a dual-head ONNX with embedding),
+    and copies any of the well-known plot / metrics files into
+    ``export_dir``. The returned manifest is what
+    :mod:`yolov8.publish` uploads to HuggingFace.
+
+    The ``best.pt`` copy has ``train_args.data`` / ``project`` /
+    ``model`` paths replaced with ``sha3-224`` digests so the
+    published artefact doesn't leak the trainer's local filesystem
+    layout.
+
+    :param workdir: Source training directory containing
+        ``weights/best.pt``.
+    :type workdir: str
+    :param export_dir: Destination directory for the staged files.
+        Created if missing.
+    :type export_dir: str
+    :param name: Display name embedded in the staged filenames
+        (``<name>_model.pt``, etc.). ``None`` falls back to the
+        workdir's basename.
+    :type name: str or None
+    :param opset_version: ONNX opset for the produced ``.onnx`` file.
+    :type opset_version: int
+    :param logfile_anonymous: When ``True`` (the default), tensorboard
+        ``events.out.tfevents.*`` filenames have their machine
+        component sha3-anonymised before staging.
+    :type logfile_anonymous: bool
+    :param with_embedding: When ``True``, also export a dual-head ONNX
+        named ``<name>_model_with_embedding.onnx`` with an additional
+        ``embedding`` output suitable for retrieval / dedup / FAISS.
+    :type with_embedding: bool
+    :param embedding_layer_indices: Forwarded to
+        :func:`yolov8.onnx.export_yolo_to_onnx_with_embedding` when
+        ``with_embedding`` is ``True``. ``None`` defaults to
+        Ultralytics' second-to-last layer.
+    :type embedding_layer_indices: list[int] or None
+    :returns: Manifest as a list of ``(local_path, repo_path)``
+        tuples, in upload order.
+    :rtype: list[tuple[str, str]]
+
+    Example::
+
+        >>> from yolov8.export import export_model_from_workdir
+        >>> manifest = export_model_from_workdir(
+        ...     workdir="runs/some_train",
+        ...     export_dir="/tmp/export",
+        ...     name="my_model",
+        ...     with_embedding=True,
+        ... )
+        >>> [r for _, r in manifest][:2]
+        ['model.pt', 'labels.json']
+    """
     name = name or os.path.basename(os.path.abspath(workdir))
     os.makedirs(export_dir, exist_ok=True)
 
@@ -98,6 +156,20 @@ def export_model_from_workdir(workdir, export_dir, name: Optional[str] = None,
     export_yolo_to_onnx(workdir, best_onnx_exp, opset_version=opset_version)
     files.append((best_onnx_exp, 'model.onnx'))
 
+    if with_embedding:
+        # Optional dual-head ONNX with an additional ``embedding``
+        # output. Same checkpoint, produced via the embedding-aware
+        # exporter so consumers wanting both retrieval features and
+        # detection can use a single graph.
+        embed_onnx_exp = os.path.join(export_dir, f'{name}_model_with_embedding.onnx')
+        logging.info(f'Export onnx model with embedding to {embed_onnx_exp!r}')
+        export_yolo_to_onnx_with_embedding(
+            workdir, embed_onnx_exp,
+            opset_version=opset_version,
+            layer_indices=embedding_layer_indices,
+        )
+        files.append((embed_onnx_exp, 'model_with_embedding.onnx'))
+
     for f in _KNOWN_FILES:
         src = os.path.join(workdir, f)
         if os.path.exists(src):
@@ -136,10 +208,43 @@ print_version = partial(_origin_print_version, 'export')
               help='Name of the checkpoint. Default is the basename of the work directory.', show_default=True)
 @click.option('--opset_version', 'opset_version', type=int, default=14,
               help='Version of OP set.', show_default=True)
-def cli(workdir: str, name: Optional[str], opset_version: int = 14):
+@click.option('--with-embedding/--no-embedding', 'with_embedding', default=False,
+              show_default=True,
+              help='Also export a second ONNX (model_with_embedding.onnx) '
+                   'whose graph emits the predictions plus a pooled image '
+                   'embedding suitable for retrieval / dedup / FAISS.')
+def cli(workdir: str, name: Optional[str], opset_version: int = 14,
+        with_embedding: bool = False):
+    """Click entry point: stage a workdir into ``<workdir>/export/`` and zip it.
+
+    Calls :func:`export_model_from_workdir` and packs every produced
+    file into ``<workdir>/export/<name>.zip``. CLI form::
+
+        python -m yolov8.export -w runs/my_train [--with-embedding]
+
+    :param workdir: Source training directory containing
+        ``weights/best.pt``.
+    :type workdir: str
+    :param name: Display name for the bundle. Defaults to the
+        workdir's basename.
+    :type name: str or None
+    :param opset_version: ONNX opset.
+    :type opset_version: int
+    :param with_embedding: Also stage ``model_with_embedding.onnx``
+        with an ``embedding`` output for retrieval / dedup / FAISS.
+    :type with_embedding: bool
+
+    Example::
+
+        >>> # CLI form (preferred):
+        >>> #   python -m yolov8.export -w runs/some_train --with-embedding
+        >>> from yolov8.export import cli  # click callback
+    """
     logging.try_init_root(logging.INFO)
     export_dir = os.path.join(workdir, 'export')
-    files = export_model_from_workdir(workdir, export_dir, name, opset_version=opset_version)
+    files = export_model_from_workdir(workdir, export_dir, name,
+                                       opset_version=opset_version,
+                                       with_embedding=with_embedding)
 
     zip_file = os.path.join(export_dir, f'{name}.zip')
     logging.info(f'Packing all the above file to archive {zip_file!r}')

@@ -11,6 +11,44 @@ from ._threshold_callback import make_on_train_end_threshold_writer
 
 def train_segmentation(workdir: str, train_cfg: str, level: str = 's', yversion: Union[int, str] = 8,
                        max_epochs: int = 200, batch: int = 16, pretrained: Optional[str] = None, **kwargs):
+    """Train an Ultralytics segmentation model into ``workdir``.
+
+    Same shape as :func:`yolov8.train.train_object_detection` but
+    picks ``yolov{N}{level}-seg.pt`` for the pretrained checkpoint and
+    captures mask-level F1 curves (``kind='seg'``) for the threshold
+    JSON. RT-DETR is not supported here - use detection for RT-DETR.
+
+    :param workdir: Run output directory. See
+        :func:`train_object_detection` for the full layout
+        conventions.
+    :type workdir: str
+    :param train_cfg: Dataset YAML path or directory containing
+        ``data.yaml`` / ``data.yml``.
+    :type train_cfg: str
+    :param level: Model size suffix (``"n"`` / ``"s"`` / ``"m"`` /
+        ``"l"`` / ``"x"``).
+    :type level: str
+    :param yversion: YOLO family selector (``8`` / ``11`` / ...).
+    :type yversion: int or str
+    :param max_epochs: Maximum epochs.
+    :type max_epochs: int
+    :param batch: Per-device batch size.
+    :type batch: int
+    :param pretrained: Override the pretrained-checkpoint source.
+    :type pretrained: str or None
+    :param kwargs: Forwarded to ``model.train(...)``.
+
+    Example::
+
+        >>> from yolov8.train import train_segmentation
+        >>> train_segmentation(
+        ...     workdir="runs/seg_smoke",
+        ...     train_cfg="coco8-seg.yaml",
+        ...     level="n",
+        ...     max_epochs=3,
+        ...     batch=4,
+        ... )
+    """
     logging.try_init_root(logging.INFO)
 
     # Load a pretrained YOLO model (recommended for training)
