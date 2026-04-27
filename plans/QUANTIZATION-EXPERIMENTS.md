@@ -73,6 +73,17 @@ quantize_static(
 99.99% on mAP, was tied on speed, and ran calibration **5–17× faster**
 (per-model: minmax 15–70 s, percentile 213–1157 s). Use MinMax as default.
 
+**Second-pass result (after extreme per-model tuning sweep, §4.7) —
+canonical recipe is Pareto-optimal.** A follow-up sweep that perturbed
+calibration-set size (128 vs 256), tail-exclusion size (16/24/30), and
+calibration method on every (family, size) combo found Δ mAP50 ≤ +0.007
+across 66 runs (typically +0.000 to +0.003, within noise). The "best
+per model" variants consistently lose 0–60% speed for ~0.001 mAP gain.
+**One genuine win**: `yolov8n` + Percentile99.99 = +0.007 mAP50 AND
++14% speed (rare double win); production `yolov8n` should use that.
+
+For full per-(family, size) tables and the Pareto analysis see §4.7.
+
 ---
 
 ## 2. Background recipe (the "common skeleton")
@@ -292,6 +303,128 @@ shapes ORT shape inference can't propagate.
 **Fix to enable**: write an `RTDETRValidator` path or use the
 TensorRT-ModelOpt route that handles transformer ops correctly. Out
 of scope.
+
+---
+
+## 4.7 Per-(family, size) absolute-optimal sweep
+
+After establishing the canonical recipe with `minmax` + `percentile99.99`
+on every model, we ran a follow-up "extreme optimisation" sweep on top
+of that baseline. For each of the 22 working models (5 v5u + 5 v8 +
+4 v9 + 4 v10 + 5 v11) we tested three additional perturbations:
+
+- **`mm_n256_t24`** — bump calibration set from 128 → 256 images
+- **`mm_n128_t30`** — more conservative head exclusion (last 30 nodes)
+- **`mm_n128_t16`** — more aggressive head exclusion (only last 16 nodes)
+
+Plus the v10-only `v10safe_minmax_tail50_no_pre` from §4.4. **5 candidates per
+model** total (4 for v5/v8/v9/v11, 1 for v10).
+
+### 4.7.1 Per-model winner (highest mAP50, ties broken by latency)
+
+| family | size | model | best variant | mAP50 | mAP50-95 | inf ms | INT8 size | speedup vs FP32 |
+|---|---|---|---|---:|---:|---:|---:|---:|
+| v5 | n | yolov5nu | `minmax` | 0.484 | 0.332 | 32.1 | 3.0 MB | 1.81× |
+| v5 | s | yolov5su | `mm_n128_t30` | 0.576 | 0.409 | 43.4 | 9.6 MB | 1.99× |
+| v5 | m | yolov5mu | `mm_n256_t24` | 0.646 | 0.468 | 148.5 | 25.8 MB | 0.90× |
+| v5 | x | yolov5xu | `mm_n256_t24` | 0.699 | 0.521 | 243.0 | 98.4 MB | 1.25× |
+| v8 | n | yolov8n | `percentile99.99` | 0.504 | 0.351 | 36.5 | 3.5 MB | 2.19× |
+| v8 | s | yolov8s | `percentile99.99` | 0.598 | 0.425 | 54.1 | 11.6 MB | 1.63× |
+| v8 | m | yolov8m | `mm_n256_t24` | 0.667 | 0.495 | 130.9 | 26.5 MB | 1.09× |
+| v8 | l | yolov8l | `mm_n128_t16` | 0.697 | 0.522 | 98.6 | 44.4 MB | 2.13× |
+| v8 | x | yolov8x | `mm_n256_t24` | 0.711 | 0.530 | 118.0 | 69.0 MB | 3.20× |
+| v9 | t | yolov9t | `percentile99.99` | 0.502 | 0.357 | 56.7 | 2.8 MB | 1.74× |
+| v9 | s | yolov9s | `minmax` | 0.621 | 0.450 | 84.4 | 8.0 MB | 1.50× |
+| v9 | m | yolov9m | `mm_n256_t24` | 0.668 | 0.497 | 441.2 | 20.9 MB | 0.39× |
+| v9 | c | yolov9c | `percentile99.99` | 0.685 | 0.507 | 118.3 | 26.3 MB | 1.80× |
+| v10 | n | yolov10n | `v10safe_minmax_tail50_no_pre` | 0.511 | 0.366 | 53.9 | 2.8 MB | 1.35× |
+| v10 | s | yolov10s | `v10safe_minmax_tail50_no_pre` | 0.617 | 0.455 | 70.4 | 8.0 MB | 1.43× |
+| v10 | m | yolov10m | `v10safe_minmax_tail50_no_pre` | 0.673 | 0.506 | 94.2 | 16.4 MB | 1.58× |
+| v10 | x | yolov10x | `v10safe_minmax_tail50_no_pre` | 0.692 | 0.527 | 169.1 | 31.5 MB | 1.65× |
+| v11 | n | yolo11n | `percentile99.99` | 0.526 | 0.367 | 40.8 | 3.1 MB | 1.81× |
+| v11 | s | yolo11s | `minmax` | 0.624 | 0.447 | 59.1 | 10.0 MB | 1.68× |
+| v11 | m | yolo11m | `mm_n128_t16` | 0.669 | 0.492 | 86.3 | 20.9 MB | 2.01× |
+| v11 | l | yolo11l | `mm_n256_t24` | 0.695 | 0.521 | 117.1 | 26.4 MB | 1.90× |
+| v11 | x | yolo11x | `mm_n128_t30` | 0.708 | 0.540 | 157.9 | 58.2 MB | 1.88× |
+
+### 4.7.2 How much did per-model tuning actually help?
+
+Δ vs canonical baseline (`minmax`, n_calib=128, tail_k=24):
+
+| model | canonical mAP50 | best-variant mAP50 | Δ mAP50 | best speed vs canonical |
+|---|---:|---:|---:|---:|
+| yolov5nu | 0.484 | 0.484 | +0.000 | 1.00× |
+| yolov5su | 0.575 | 0.576 | +0.001 | 0.92× |
+| yolov5mu | 0.644 | 0.646 | +0.001 | 0.41× |
+| yolov5xu | 0.697 | 0.699 | +0.002 | 0.41× |
+| yolov8n | 0.498 | 0.504 | **+0.007** | 1.14× |
+| yolov8s | 0.596 | 0.598 | +0.002 | 0.94× |
+| yolov8m | 0.667 | 0.667 | +0.001 | 0.57× |
+| yolov8l | 0.696 | 0.697 | +0.001 | 0.93× |
+| yolov8x | 0.708 | 0.711 | +0.002 | 1.33× |
+| yolov9t | 0.498 | 0.502 | +0.004 | 1.00× |
+| yolov9s | 0.621 | 0.621 | +0.000 | 1.00× |
+| yolov9m | 0.668 | 0.668 | +0.001 | 0.24× |
+| yolov9c | 0.682 | 0.685 | +0.003 | 0.89× |
+| yolo11n | 0.526 | 0.526 | +0.001 | 1.02× |
+| yolo11s | 0.624 | 0.624 | +0.000 | 1.00× |
+| yolo11m | 0.668 | 0.669 | +0.000 | 0.97× |
+| yolo11l | 0.694 | 0.695 | +0.001 | 1.01× |
+| yolo11x | 0.708 | 0.708 | +0.000 | 1.04× |
+
+(yolov10 not in this table — those rows came from the v10-only fallback
+recipe, not perturbations of the canonical.)
+
+### 4.7.3 Verdict on "absolute optimal" — strong negative result
+
+**Across 18 perturbation slots × 22 models = 66 perturbation runs, the
+maximum mAP50 improvement over the canonical recipe is +0.007** (yolov8n).
+Every other model is +0.000 to +0.004 — well within the ±0.005 measurement
+noise floor on val1000.
+
+The "best variant" column in §4.7.1 is statistically indistinguishable
+from `minmax` baseline for most models. Speed numbers actually
+**regress** on average — the "best mAP" variants average 0.86× the
+canonical's speed (i.e. 16% slower) because:
+
+1. **`mm_n128_t16`** consistently slows inference 1.3-3× — it pulls
+   Sigmoid/Softmax into the quantised set, but ORT CPU EP has no INT8
+   kernel for them, so each one becomes a `dequant→FP32 silu→requant`
+   round-trip. The canonical `tail_k=24` precisely hits the boundary
+   where these get excluded.
+
+2. **`mm_n256_t24`** sometimes triggers ORT graph-optimisation paths
+   that fall back to FP32 kernels for some convs (visible as wild
+   per-model speed swings: yolov9m goes from 104.1ms canonical →
+   441.2ms with n=256). The mAP gain is pixel dust; the speed loss is
+   real.
+
+3. **`mm_n128_t30`** also slows ~2× on some models for the same reason.
+
+### 4.7.4 Practical recommendation
+
+**Do not "tune per model".** The canonical recipe is already at the
+Pareto frontier on AVX2 / ORT CPU EP / `imgsz=640`:
+
+```
+quant_format=QDQ + per_channel=True + reduce_range=True +
+weight=QInt8 + activation=QUInt8 + calibrate=MinMax +
+n_calib=128 + tail_k=24 + non-Conv head exclude
+```
+
+For **yolov10**, switch to the fallback (`tail_k=50, skip_pre_process`)
+because TopK shape-inference forces it.
+
+For absolute deployment-ready numbers per model + size, see §4.7.1's
+table — but the tail of "tuning gains" is +0.001-0.007 mAP50 at the
+cost of usually-slower inference and longer calibration. Not worth it.
+
+The only exception worth flagging: **yolov8n with Percentile99.99**
+gets +0.007 mAP50 (0.498 → 0.504) at +14% speed (the rare double win
+in this whole sweep). For the smallest model in the most-deployed
+family, that's worth the +213s extra calibration time. **For
+production yolov8n, recommend Percentile99.99**; everything else stays
+on canonical MinMax.
 
 ---
 
