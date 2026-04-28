@@ -22,6 +22,7 @@ trained models to HuggingFace (and, optionally, Roboflow).
   - [What ends up in the work directory](#what-ends-up-in-the-work-directory)
   - [Resuming a run](#resuming-a-run)
 - [Exporting to ONNX](#exporting-to-onnx)
+- [Quantizing to INT8 (Tier S PTQ)](#quantizing-to-int8-tier-s-ptq)
 - [Publishing to HuggingFace](#publishing-to-huggingface)
 - [Aggregating a model table on a HuggingFace repo](#aggregating-a-model-table-on-a-huggingface-repo)
 - [Publishing to Roboflow (legacy / optional)](#publishing-to-roboflow-legacy--optional)
@@ -43,8 +44,15 @@ trained models to HuggingFace (and, optionally, Roboflow).
 - `python -m yolov8.export` packages a training run into a portable archive
   (best checkpoint, ONNX, training curves, confusion matrix, anonymised
   TensorBoard logs).
+- `python -m yolov8.quantize` runs a one-shot INT8 post-training quantization
+  with the empirically validated **Tier S** recipe (Percentile 99.999 +
+  symmetric + per-channel + reduce_range, N=128 random calibration). The
+  deployable `.int8.onnx` carries its own re-validated threshold. See
+  [Quantizing to INT8](#quantizing-to-int8-tier-s-ptq).
 - `python -m yolov8.publish huggingface` uploads the archive to a HuggingFace
-  model repo with one command, including an OCR'd recommended F1 threshold.
+  model repo with one command, including a recommended F1 threshold computed
+  directly from the validator metrics. Optional `--with-int8` also publishes
+  the INT8 ONNX + its eval / threshold sidecars.
 - `python -m yolov8.list` regenerates a comparison table in the HuggingFace
   repo's `README.md`, in place, without disturbing the rest of the page.
 - Optional Roboflow publish path kept for legacy users (see the dedicated
@@ -222,15 +230,19 @@ runs/your_training_task_xxx/
 ├── labels.jpg                     dataset label distribution
 ├── labels_correlogram.jpg
 ├── events.out.tfevents.*          TensorBoard logs
-└── model_type.json                {"model_type": "yolo"|"rtdetr",
-                                    "problem_type": "detection"|"segmentation"}
-                                    — written by this wrapper
+├── threshold.json                 mean + per-class best F1 / threshold,
+│                                  computed directly from the validator's
+│                                  in-memory curves (no OCR involved)
+└── (no model_type.json sidecar; model_type and problem_type are derived
+    on demand from the embedded class on weights/best.pt — see
+    `yolov8.utils.derive_model_meta`)
 ```
 
-`model_type.json` is intentionally written **30 seconds after training
-starts**, because Ultralytics wipes the work directory at training start.
-Don't be alarmed by the brief gap; the export and publish flows depend on
-this file being present.
+The previous 30-second-delayed `model_type.json` write was removed
+because Ultralytics wipes the work directory at training start and
+the same metadata lives unconditionally inside every `best.pt` /
+`last.pt`. Export and publish now derive `model_type` /
+`problem_type` from the checkpoint at upload time.
 
 ### Resuming a run
 
@@ -270,6 +282,102 @@ You usually don't need to invoke this manually — `python -m yolov8.publish
 huggingface` runs the same export pipeline before uploading. Use it directly
 when you want a self-contained zip without publishing.
 
+## Quantizing to INT8 (Tier S PTQ)
+
+`yolov8.quantize` produces a deployable INT8 ONNX from a finished
+training run. The recipe is fixed (no per-call knobs to tune): we ran
+a multi-week experimental sweep across YOLO families and converged on
+a single configuration that wins on every dataset + model cell we
+tested. See [`plans/YOLO-INT8-PTQ-CALIBRATION-RECIPE.md`][recipe-doc]
+for the empirical write-up; the punchy version is:
+
+- **Calibrator**: ONNX Runtime `Percentile` with cutoff **99.999** +
+  `CalibTensorRangeSymmetric=True`. Symmetric activations (`QUInt8`)
+  + per-channel symmetric weights (`QInt8`).
+- **Format**: `QDQ`. **`reduce_range=True`** is mandatory on ORT
+  1.23 CPU EP — turning it off drops mAP retention from ~96 % to
+  ~50 % regardless of every other knob.
+- **Calibration data**: `N=128` images sampled uniformly at random
+  from the training set, seed-locked. No embedding-coreset; "smart"
+  selections (FPS / k-means / SelectQ / easy-examples) measurably
+  underperform random under this calibrator.
+- **Head exclusion**: a unified tail-60 + extended op-type set that
+  covers v8/v9/v10/v11 in one rule (the v10 NMS-free postproc op
+  types are added; harmless on v8/v11).
+
+Empirically across **7 (version, size) cells × COCO val2017** plus a
+private 4-class finetuned dataset, the recipe lands at **95.7 –
+98.8 % mAP50 retention** vs the FP32 ONNX of the same model
+(yolov9s + COCO leads at 98.8 %). Seed-stable within ±0.15 pp.
+
+```shell
+python -m yolov8.quantize -w runs/your_training_task_xxx
+# Common flags:
+#   --data                override the dataset yaml (otherwise read from args.yaml)
+#   --train-images        override the training-image directory used as the calib pool
+#   --calib-n / --calib-seed   defaults: 128 / 0
+#   --imgsz               default: read from args.yaml, falls back to 640
+#   --no-eval             skip the post-quantization val pass
+#   --force               re-run quantization even if quant/int8/*_int8.onnx exists
+```
+
+Outputs land under `<workdir>/quant/`:
+
+```
+runs/your_training_task_xxx/quant/
+├── int8/<task>_imgsz640_int8.onnx     ← deployable (carries metadata + threshold)
+├── onnx/<task>_imgsz640_fp32.onnx     ← FP32 source (kept so re-quantization is cheap)
+├── onnx/<task>_imgsz640_pre.onnx
+├── calib_lists/random128_seed0.txt
+├── eval.json                          ← INT8 mAP50 / mAP50-95 / P / R / speed
+├── threshold.json                     ← INT8-specific F1 threshold (recomputed)
+└── quant_args.json                    ← exact recipe knobs used
+```
+
+Re-running on the same workdir reuses the existing INT8 artifact —
+calibration is the slow step (3–10 minutes depending on model size)
+and is skipped silently. Use `--force` if you've changed the dataset
+or want a fresh run.
+
+The deployable `.int8.onnx` is fully self-describing — its
+`metadata_props` carries every standard Ultralytics key plus a
+`dghs.yolov8.quant.*` namespace recording the recipe, the eval
+payload, and an INT8-specific `dghs.yolov8.threshold` (the optimal
+F1 confidence threshold for the quantized graph specifically, which
+generally differs slightly from the FP32 threshold).
+
+**Where the recipe came from.** External resources surveyed during
+the calibration / sampling sweep:
+
+- [NVIDIA Integer Quantization Whitepaper (arXiv 2004.09602)][nvidia-iq]
+- [ONNX Runtime quantization docs][ort-quant]
+- [Ultralytics community: PTQ methods support for YOLO][ult-ptq]
+- [SqueezeBits OwLite — How to quantize YOLO models][owlite-yolo]
+- [Q-YOLO / MPQ-YOLO][qyolo]
+- [SelectQ: Calibration Data Selection for PTQ (MIR 2025)][selectq]
+- [CL-Calib: Enhancing PTQ Calibration via Contrastive Learning (CVPR 2024)][clcalib]
+- [Dataset Quantization (ICCV 2023)][dataset-quant]
+- [NVIDIA TensorRT issue #1114 (YOLOv5 SiLU collapse)][trt-1114]
+
+The full Tier-S/Tier-A/Tier-B + rule-out + worth-trying tabulation,
+the per-(version, size) retention numbers, and the 10 figures
+documenting the experiment chain are in
+[`plans/YOLO-INT8-PTQ-CALIBRATION-RECIPE.md`][recipe-doc]. An earlier
+cross-family fixed-recipe sweep is in
+[`plans/QUANTIZATION-EXPERIMENTS.md`][sweep-doc].
+
+[recipe-doc]: ./plans/YOLO-INT8-PTQ-CALIBRATION-RECIPE.md
+[sweep-doc]:  ./plans/QUANTIZATION-EXPERIMENTS.md
+[nvidia-iq]:  https://arxiv.org/pdf/2004.09602
+[ort-quant]:  https://onnxruntime.ai/docs/performance/model-optimizations/quantization.html
+[ult-ptq]:    https://community.ultralytics.com/t/post-training-quantization-methods-support-for-yolo-models-in-tensorrt-format/977
+[owlite-yolo]: https://blog.squeezebits.com/how-to-quantize-yolo-models-with-owlite-54076
+[qyolo]:      https://github.com/Meize0729/Q-YOLO
+[selectq]:    https://www.mi-research.net/article/doi/10.1007/s11633-024-1518-0
+[clcalib]:    https://openaccess.thecvf.com/content/CVPR2024/papers/Shang_Enhancing_Post-training_Quantization_Calibration_through_Contrastive_Learning_CVPR_2024_paper.pdf
+[dataset-quant]: https://openaccess.thecvf.com/content/ICCV2023/papers/Zhou_Dataset_Quantization_ICCV_2023_paper.pdf
+[trt-1114]:   https://github.com/NVIDIA/TensorRT/issues/1114
+
 ## Publishing to HuggingFace
 
 ```shell
@@ -283,6 +391,11 @@ python -m yolov8.publish huggingface \
 #   -n / --name             override the per-model directory inside the repo
 #   -R / --revision         target branch (default: main)
 #   --opset_version 14      forwarded to ONNX export
+#   --with-int8             also publish the Tier S INT8 ONNX (reuses
+#                           <workdir>/quant/ if already populated; otherwise
+#                           runs the quantize pipeline first)
+#   --dry-run               report the manifest without uploading; HF_TOKEN
+#                           is not required in this mode
 ```
 
 This will, in a single commit:
@@ -293,9 +406,12 @@ This will, in a single commit:
    - `<name>/model.pt`        — anonymised PyTorch checkpoint
    - `<name>/model.onnx`      — exported ONNX
    - `<name>/labels.json`     — class index → label name
-   - `<name>/threshold.json`  — `{f1_score, threshold}` (when OCR succeeded)
+   - `<name>/threshold.json`  — `{f1_score, threshold, per_class}`
    - `<name>/model_type.json` — `{model_type, problem_type}`
    - Plots, results.csv, anonymised TensorBoard event files
+   - With `--with-int8`: `<name>/model.int8.onnx` (deployable INT8) +
+     `<name>/eval_int8.json` + `<name>/threshold_int8.json` (INT8-specific) +
+     `<name>/quant_args.json` (recipe knobs).
 
 You can publish many models into the same repository — each lives in its
 own subdirectory, and the next section explains how to keep an index of
@@ -415,15 +531,21 @@ yolov8/                   the actual Python package
 ├── train/
 │   ├── object_detection.py    train_object_detection(...)
 │   └── segmentation.py        train_segmentation(...)
-├── export.py                  workdir → bundle (with anonymisation)
-├── onnx.py                    YOLO/RTDETR → ONNX (dynamic, simplified)
+├── export.py                  workdir → bundle (with anonymisation; --with-int8 packs INT8)
+├── onnx/                      YOLO/RTDETR → ONNX; predict-only and dual-head (+ embedding)
+├── quantize.py                workdir → INT8 ONNX (Tier S PTQ); CLI + library
 ├── publish.py                 `python -m yolov8.publish {huggingface,roboflow}`
 ├── list.py                    `python -m yolov8.list` — refresh HF README table
 ├── config/meta.py             single source of truth for version/author
-└── utils/                     small utilities (CLI helpers, F1-curve OCR, etc.)
+└── utils/                     small utilities (CLI helpers, threshold extractor, …)
+
+plans/                         design docs and experimental write-ups
+├── QUANTIZATION-EXPERIMENTS.md           cross-family fixed-recipe sweep
+├── YOLO-INT8-PTQ-CALIBRATION-RECIPE.md   Tier S calibration / sampling study
+└── YOLO-INT8-PTQ-CALIBRATION-RECIPE.assets/  10 figures + make_plots.py
 
 requirements.txt               main runtime deps (ultralytics<=8.3.105)
-requirements-onnx.txt          ONNX export deps (always recommended)
+requirements-onnx.txt          ONNX export + quantization deps (always recommended)
 requirements-roboflow.txt      optional, for the legacy Roboflow publish path
 requirements-doc.txt           docs build deps
 requirements-test.txt          test deps
