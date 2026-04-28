@@ -5,7 +5,7 @@
 > - **Hardware**: AMD EPYC 7J13, 16 cores, AVX2, `device=cpu`, `batch=1`, `imgsz=640`
 > - **Software**: ultralytics 8.3.40, onnxruntime 1.23.2, opset 14, QDQ format
 > - **Datasets**: COCO val2017 (5 000 images, 80 classes); private 4-class document-layout dataset (2 964 val images, yolo11n trained on 23 783 images)
-> - **Models tested**: yolov8n / yolov8s / yolov8m / yolo11n / yolov10n / yolov9s
+> - **Models tested**: yolov8n / yolov8s / yolov8m / yolo11n / yolo11s / yolov10n / yolov9s
 > - **Date**: 2026-04-28
 >
 > All experimental scripts live under `tmp_embed/quant_coreset*/` (gitignored). Key code blocks are inlined in §10 below for reproducibility.
@@ -76,13 +76,14 @@ quantize_static(
 | yolo11n | 2.6 M | 0.5471 | 0.5261 | **96.2%** |
 | yolov10n | 2.8 M | 0.5313 | 0.5083 | **95.7%** |
 | yolov9s | 7.2 M | 0.6214 | 0.6139 | **98.8%** |
+| yolo11s | 9.4 M | 0.6308 | 0.6177 | **97.9%** |
 | yolov8s | 11.2 M | 0.6124 | 0.6023 | **98.3%** |
 | yolov8m | 25.9 M | 0.6662 | 0.6563 | **98.5%** |
 | in-house 4-class yolo11n | 2.6 M | 0.9568 | 0.9185 | **96.0%** |
 
 ![Cross-version retention](YOLO-INT8-PTQ-CALIBRATION-RECIPE.assets/fig04_cross_version.png)
 
-*Figure 4. Side-by-side bars of FP32 ONNX (blue) vs INT8 Tier S (gold) across the 6 (version, size) cells we ran on COCO val2017 (v8n / v8s / v8m / v9s / v10n / v11n). Retention percentages annotated on the gold bars. The yolov10n* bar uses the extended head_exclude variant — without it, INT8 collapses to 0%. yolov9s leads at 98.8 % — the GELAN backbone is unusually PTQ-friendly.*
+*Figure 4. Side-by-side bars of FP32 ONNX (blue) vs INT8 Tier S (gold) across the 7 (version, size) cells we ran on COCO val2017 (v8n / v8s / v8m / v9s / v10n / v11n / v11s). Retention percentages annotated on the gold bars. The yolov10n* bar uses the extended head_exclude variant — without it, INT8 collapses to 0%. yolov9s leads at 98.8 % — the GELAN backbone is unusually PTQ-friendly.*
 
 Seed-stable across 3 random seeds within ±0.15 pp.
 
@@ -140,6 +141,7 @@ The findings in this document supersede the calibration recipe in `QUANTIZATION-
 | yolo11n | `/data/yolov8/yolo11n.pt` | 2.62 M | 0.5471 | Version cross-check |
 | yolov10n | `/data/yolov8/tmp_embed/weights/yolov10n.pt` | 2.76 M | 0.5313 | NMS-free head test |
 | yolov9s | `/data/yolov8/tmp_embed/weights/yolov9s.pt` | 7.20 M | 0.6214 | GELAN backbone test |
+| yolo11s | `/data/yolov8/tmp_embed/weights/yolo11s.pt` | 9.44 M | 0.6308 | v11 size-scaling |
 | in-house yolo11n | `runs/yolo_full_4label_yolo11n/weights/best.pt` | 2.62 M | 0.9568 | Narrow-data regime |
 
 ### 3.3 Common Pipeline
@@ -631,7 +633,8 @@ This table is what to expect when you apply the universal Tier S recipe above. N
 | **yolov8m** | 0.6662 | 0.6563 | **98.5%** | tested |
 | yolov8l/x | — | — | (≥98.5% expected by trend) | not tested |
 | **yolo11n** | 0.5471 | 0.5261 | **96.2%** | tested |
-| yolo11s/m/l/x | — | — | (97-99% expected) | not tested |
+| **yolo11s** | 0.6308 | 0.6177 | **97.9%** | tested; v11 size-scaling confirmed (n→s: +1.7 pp) |
+| yolo11m / l / x | — | — | (98-99% expected by trend) | not tested |
 | **yolov10n** | 0.5313 | 0.5083 | **95.7%** | tested; needs `skip_symbolic_shape=True` |
 | yolov10s/m/l/x | — | — | (97-99% expected) | not tested |
 | **yolov9s** | 0.6214 | 0.6139 | **98.8%** | tested; highest retention of any model in this study (GELAN backbone is unusually PTQ-friendly) |
