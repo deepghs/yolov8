@@ -242,6 +242,7 @@ def fig4_cross_version():
         ('yolov8n', 'v8',  3.2, 0.5206, 0.5025, 'tail-24'),
         ('yolo11n', 'v11', 2.6, 0.5471, 0.5261, 'tail-24'),
         ('yolov10n*', 'v10', 2.8, 0.5313, 0.5083, 'tail-60'),
+        ('yolov9s', 'v9',  7.2, 0.6214, 0.6139, 'tail-24'),
         ('yolov8s', 'v8',  11.2, 0.6124, 0.6023, 'tail-24'),
         ('yolov8m', 'v8',  25.9, 0.6662, 0.6563, 'tail-24'),
     ]
@@ -272,8 +273,9 @@ def fig4_cross_version():
     ax.set_xticklabels(labels, fontsize=9)
     ax.set_ylabel('mAP50 (COCO val2017)')
     ax.set_title('Fig 4. Cross-version validation — Tier S R5 recipe consistent across '
-                 '4 architectures × 3 sizes\n'
-                 'v10n* requires extended head_exclude (tail-60 + extra ops)',
+                 'v8 / v9 / v10 / v11 (n through m sizes)\n'
+                 'v10n* requires extended head_exclude (tail-60 + extra ops); '
+                 'v9s leads at 98.8 %',
                  loc='left')
     ax.legend(loc='upper left')
     ax.grid(axis='y', alpha=0.3)
