@@ -88,9 +88,35 @@ quantize_static(
 | yolov8m | 25.9 M | 0.6662 | 0.6563 | **98.5%** |
 | in-house 4-class yolo11n | 2.6 M | 0.9568 | 0.9185 | **96.0%** |
 
+![Cross-version retention](YOLO-INT8-PTQ-CALIBRATION-RECIPE.assets/fig04_cross_version.png)
+
+*Figure 4. Side-by-side bars of FP32 ONNX (blue) vs INT8 Tier S (gold)
+across the 5 (version, size) cells we ran on COCO val2017. Retention
+percentages annotated on the gold bars. The yolov10n* bar uses the
+extended head_exclude variant — without it, INT8 collapses to 0%.*
+
 Seed-stable across 3 random seeds within ±0.15 pp.
 
 The full self-contained quantization helper is in §10.
+
+---
+
+## List of Figures
+
+All figures are auto-generated from result JSONs by
+`YOLO-INT8-PTQ-CALIBRATION-RECIPE.assets/make_plots.py`; rerun that
+script to regenerate the PNGs after extending the experiment.
+
+| # | Title | Section |
+|---:|---|---|
+| Fig 1 | In-house yolo11n 4-class — sampling × calibrator heatmap | §7.2 |
+| Fig 2 | COCO yolov8n recipe-knob sweep (R0–R8) | §6 |
+| Fig 3 | yolov8 size scaling (n / s / m) | §7.5 |
+| Fig 4 | Cross-version retention (5 model cells) | §1 |
+| Fig 5 | Two-regime: COCO vs narrow data | §7.2 |
+| Fig 6 | Effective Entropy nb=2048 vs broken default | §7.1 |
+| Fig 7 | Tier S seed stability (3 seeds) | §7.6 |
+| Fig 8 | Tier S deployment decision flow | §9 |
 
 ---
 
@@ -230,6 +256,18 @@ recipe configurations:
 `R5_extended_exclude`: Tier S R5 with `HEAD_TAIL_K=60` and the extended
 op-type set covering v10's NMS-free postproc.
 
+![Recipe sweep on COCO yolov8n](YOLO-INT8-PTQ-CALIBRATION-RECIPE.assets/fig02_coco_recipe_sweep.png)
+
+*Figure 2. All 9 recipes (R0–R8) on COCO yolov8n + random500
+calibration, sorted by retention. The gold bar is Tier S. R3
+(`reduce_range=False`) is the lone catastrophe at 49.7% — every
+"reasonable" knob change still yielded ≥90%, but turning off
+reduce_range alone cuts the model in half. R7 (DFL-only exclude)
+and R1 (symmetric without other knobs) are slightly worse than
+the default R0; the recipe sweet spot is R5 (Percentile 99.999 +
+symmetric all on). R8 (custom MSE) ties with R2/R6 in the
+strong-alternative cluster but does not beat Percentile.*
+
 ---
 
 ## 7. Findings
@@ -271,6 +309,15 @@ genuinely optimises clipping.
 | random128 | 0.6166 | 0.8842 | **+28.0 pp** |
 | hard128 | 0.2827 | 0.9203 | **+66.6 pp** |
 
+![Entropy default vs effective](YOLO-INT8-PTQ-CALIBRATION-RECIPE.assets/fig06_entropy_default_vs_effective.png)
+
+*Figure 6. The hatched grey bars (Entropy nb=128, the broken default) are
+exactly the height of the blue MinMax bars — they are byte-identical INT8
+outputs. The green bars (Entropy nb=2048, after our manual bypass) show
+the genuine KL calibration: hard128 jumps from 29.5% to 96.2%, random128
+from 64.4% to 92.4%. The "easy" cases (already low-outlier calib data)
+are barely affected because there's no tail for KL search to clip.*
+
 Verified probe at `tmp_embed/quant_coreset/12_probe_calibrator.py`.
 
 ### 7.2 Two-Regime Analysis: COCO vs Narrow Data
@@ -290,6 +337,29 @@ both with N=128 calibration):
 | fps128 | — | — | 94.1% | 67.5% | 97.8% |
 | hard128 | — | — | 29.6% | 64.8% | 96.2% |
 | random_spread (across all 9 strategies) | not relevant | not relevant | **67 pp** | **31 pp** | **17 pp** |
+
+![In-house heatmap](YOLO-INT8-PTQ-CALIBRATION-RECIPE.assets/fig01_inhouse_sampling_calibrator_heatmap.png)
+
+*Figure 1. The in-house 9-sampling × 3-calibrator retention heatmap on the
+narrow 4-class dataset. The MinMax column has the largest spread (29% to
+97%) — this is the regime where calibration data selection matters most.
+The Entropy nb=2048 column tightens to 81-98%. The Percentile 99.999
+column is the most striking: random is the **best** strategy here (96%)
+while easy/fps/hard all collapse to 65-76%. The ranking is reversed
+relative to MinMax. Empty cells (—) were not run.*
+
+![Two-regime spread comparison](YOLO-INT8-PTQ-CALIBRATION-RECIPE.assets/fig05_two_regime.png)
+
+*Figure 5. Left (5a): the cross-sampling spread on the narrow dataset,
+broken down by calibrator. MinMax produces 67 pp of variation across
+sampling choices; effective Entropy compresses to 17 pp; Percentile sits
+in the middle at 31 pp but with a flipped ranking. The COCO bar is added
+for comparison — on rich data, calibrator + sampling differences
+together produce only ~2 pp of spread. Right (5b): direct comparison of
+the four (regime, calibrator, sample) cells the recipe must navigate.
+The pair "Narrow + Percentile + easy128" is a footgun (75.8%); switch
+that to random128 and you get 96.0%. The same pair under MinMax is the
+opposite — easy beats random.*
 
 **Key insight**: on rich/COCO data, every reasonable sampling strategy
 gives 95-98% under any reasonable calibrator (spread ≤ 2 pp). On narrow
@@ -382,6 +452,14 @@ moving_avg, calibrator) was unable to compensate. So:
 | yolov8s | 11.2 M | 0.6124 | 98.3% |
 | yolov8m | 25.9 M | 0.6662 | 98.5% |
 
+![Size scaling](YOLO-INT8-PTQ-CALIBRATION-RECIPE.assets/fig03_size_scaling.png)
+
+*Figure 3. yolov8 size-scaling on COCO val2017. Both axes are real
+mAP50 — blue = FP32 ONNX, gold = INT8 Tier S. The dashed green line
+on the right axis is the retention percentage; it climbs from 96.5%
+(n) → 98.3% (s) → 98.5% (m). The gap between FP32 and INT8 (the
+"PTQ tax") shrinks rapidly as the model grows.*
+
 Larger models suffer less from PTQ — the size dimension matters more
 than the calibrator dimension within the Tier S family. **For
 production deployments, prioritise running the smallest size that
@@ -397,6 +475,13 @@ R5 (Tier S) on yolov8n + COCO + random128 across three random seeds:
 | 0 | 0.5025 | 96.5% |
 | 1 | 0.5021 | 96.4% |
 | 2 | 0.5033 | 96.7% |
+
+![Seed stability](YOLO-INT8-PTQ-CALIBRATION-RECIPE.assets/fig07_seed_stability.png)
+
+*Figure 7. Three independently-seeded Tier S runs on yolov8n + COCO +
+random128. The shaded band is ±0.15 pp around the mean. The result is
+robust to the random sample drawn — there is no need to ensemble multiple
+seeded calibrations.*
 
 Spread ±0.15 pp. Tier S is not a seed artifact.
 
@@ -700,6 +785,17 @@ from the in-house 4-class layout dataset.
 
 ### Quick recipe selection flowchart
 
+![Decision flow](YOLO-INT8-PTQ-CALIBRATION-RECIPE.assets/fig08_decision_flow.png)
+
+*Figure 8. Pick the YOLO family branch (top row), apply the
+corresponding configuration tweak (middle row), then check whether the
+dataset is narrow / heavily-finetuned (bottom row). For the v8 / v9 /
+v11 family on rich data, Tier S works without any further tweaks. The
+narrow-data branch flags the Tier-A "Effective Entropy nb=2048" fall-
+back if Tier S retention is below 90%.*
+
+ASCII fallback (for terminal viewers):
+
 ```
                        Q: ORT 1.23 CPU EP target?
                        │
@@ -935,6 +1031,7 @@ Spread ±0.15 pp.
 | `quant_coreset_v8n_coco/08_quantize_mse.py` | Custom MSE calibrator implementation |
 | `quant_coreset_v8n_coco/RECIPE.py` | The Tier S/A/B + rule-out recommendation table (executable) |
 | `quant_coreset_v{tag}_coco/{01,02,04,05}*.py` | Per-(version, size) export → calib → quantize → validate (yolov8n / yolo11n / yolov10n / yolov8s / yolov8m) |
+| `plans/YOLO-INT8-PTQ-CALIBRATION-RECIPE.assets/make_plots.py` | Regenerate the 8 PNG figures from the JSON results |
 
 ### Key papers and vendor docs surveyed
 
