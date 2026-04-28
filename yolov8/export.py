@@ -41,6 +41,92 @@ _KNOWN_FILES = [
 _LOG_FILE_PATTERN = re.compile(r'^events\.out\.tfevents\.(?P<timestamp>\d+)\.(?P<machine>[^.]+)\.(?P<extra>[\s\S]+)$')
 
 
+# Path-typed fields we sha3-anonymise before writing the published
+# best.pt copy. Every access is *defensive* — missing dicts, missing
+# keys, non-string values, or strings that don't actually look like
+# paths are silently passed through. The helper below walks
+# ``state_dict['train_args']`` and ``state_dict['model'].args`` /
+# ``state_dict['ema'].args`` so the inner model object's frozen-at-
+# train-time copy of the same paths gets scrubbed too — that copy is
+# what slipped through the original ``train_args``-only path and led
+# to ``/data/yolov8/runs`` / ``/nfs/...`` showing up in published
+# bundles.
+_ANON_FIELDS_TRAIN_ARGS = ('data', 'project', 'model')
+_ANON_FIELDS_MODEL_INNER = ('data', 'project', 'save_dir', 'model')
+
+
+def _anonymise_path_field(container, field: str) -> None:
+    """If ``container`` (dict or attribute-bearing object) has
+    ``field`` set to a string that looks like a filesystem path,
+    replace it with the sha3-224 hash of that string. Anything else
+    (missing field, ``None``, empty string, non-path string) is left
+    alone.
+
+    Operates in place on the in-memory state_dict copy; the on-disk
+    file is never touched (the caller saves the mutated copy to a
+    different path).
+    """
+    if container is None:
+        return
+    is_dict = isinstance(container, dict)
+    if is_dict:
+        if field not in container:
+            return
+        v = container[field]
+    else:
+        if not hasattr(container, field):
+            return
+        v = getattr(container, field)
+    if not isinstance(v, str) or not v:
+        return
+    if '/' not in v and '\\' not in v:
+        return  # not a path-like string (e.g. 'yolo11n.pt' bare model name)
+    digest = sha3(v.encode(), n=224)
+    if is_dict:
+        container[field] = digest
+    else:
+        try:
+            setattr(container, field, digest)
+        except Exception:
+            # Frozen object / restricted setattr — leave it; we still
+            # got the dict-side anon, which is what readers normally
+            # consult.
+            pass
+
+
+def _anonymise_state_dict_paths(state_dict) -> None:
+    """Walk a freshly-loaded torch state_dict and sha3-anonymise every
+    known path-typed field on the top-level ``train_args`` dict and
+    on the inner model object's ``.args`` (and the EMA wrapper's, if
+    present). All accesses are defensive — fields that don't exist
+    are simply skipped.
+
+    This is called on an *in-memory* copy of ``best.pt`` only; the
+    on-disk training checkpoint is never touched. The mutated copy
+    is then written to ``export_dir`` for upload.
+    """
+    train_args = state_dict.get('train_args')
+    if isinstance(train_args, dict):
+        for f in _ANON_FIELDS_TRAIN_ARGS:
+            _anonymise_path_field(train_args, f)
+
+    inner = state_dict.get('model')
+    if inner is not None:
+        inner_args = getattr(inner, 'args', None)
+        for f in _ANON_FIELDS_MODEL_INNER:
+            _anonymise_path_field(inner_args, f)
+
+    # Newer ult preserves an EMA copy on best.pt sometimes. The EMA
+    # wrapper has its own ``ema.args`` (or ``ema.module.args``) that
+    # mirrors the inner model's args. Best-effort scan.
+    ema = state_dict.get('ema')
+    if ema is not None:
+        for path_obj in (getattr(ema, 'args', None),
+                         getattr(getattr(ema, 'module', None), 'args', None)):
+            for f in _ANON_FIELDS_MODEL_INNER:
+                _anonymise_path_field(path_obj, f)
+
+
 def export_model_from_workdir(workdir, export_dir, name: Optional[str] = None,
                               opset_version: int = 14, logfile_anonymous: bool = True,
                               with_embedding: bool = False,
@@ -121,20 +207,17 @@ def export_model_from_workdir(workdir, export_dir, name: Optional[str] = None,
     logging.info(f'Copying best pt {best_pt!r} to {best_pt_exp!r}')
     state_dict = torch.load(best_pt, map_location='cpu', weights_only=False)
     # Derive (model_type, problem_type) from the checkpoint's embedded model
-    # object. Done before the train_args anonymisation below for clarity —
-    # the class object is untouched by that anonymisation either way.
+    # object. Done before the path anonymisation below for clarity — the
+    # class object is untouched by that anonymisation either way.
     model_type, problem_type = derive_model_meta(state_dict)
     model_type_info = {'model_type': model_type, 'problem_type': problem_type}
-    if 'train_args' in state_dict:
-        if state_dict['train_args']['data']:
-            state_dict['train_args']['data'] = sha3(state_dict['train_args']['data'].encode(), n=224)
-        if state_dict['train_args']['project']:
-            state_dict['train_args']['project'] = sha3(state_dict['train_args']['project'].encode(), n=224)
-        if state_dict['train_args']['model'] and \
-                ('/' in state_dict['train_args']['model'] or '\\' in state_dict['train_args']['model']):
-            state_dict['train_args']['model'] = sha3(state_dict['train_args']['model'].encode(), n=224)
+    # Anonymise every known path-typed field across train_args + inner model
+    # args + EMA args. Defensive: each access tolerates missing fields /
+    # different container shapes (dict vs attribute-bearing object). The
+    # original best.pt on disk is *not* mutated — we only mutate the
+    # in-memory state_dict and write it to ``best_pt_exp``.
+    _anonymise_state_dict_paths(state_dict)
     torch.save(state_dict, best_pt_exp)
-    # shutil.copy(best_pt, best_pt_exp)
     files.append((best_pt_exp, 'model.pt'))
 
     if model_type == 'yolo':
