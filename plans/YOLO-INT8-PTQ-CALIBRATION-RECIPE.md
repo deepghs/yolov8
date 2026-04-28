@@ -1,29 +1,20 @@
 # YOLO INT8 PTQ — Calibration Sampling & Recipe Recommendation
 
-> Systematic study of **calibration data sampling strategy** and **quantizer
-> configuration knobs** for YOLO INT8 post-training quantization via
-> ONNX Runtime. Companion to `QUANTIZATION-EXPERIMENTS.md` (which
-> covers the cross-family sweep at fixed recipe); this document
-> answers "given a model, what calibration data and what calibrator
-> config gives the best INT8 mAP retention?"
+> Systematic study of **calibration data sampling strategy** and **quantizer configuration knobs** for YOLO INT8 post-training quantization via ONNX Runtime. Companion to `QUANTIZATION-EXPERIMENTS.md` (which covers the cross-family sweep at fixed recipe); this document answers "given a model, what calibration data and what calibrator config gives the best INT8 mAP retention?"
 >
-> **Hardware**: AMD EPYC 7J13, 16 cores, AVX2, `device=cpu`, `batch=1`, `imgsz=640`
-> **Software**: ultralytics 8.3.40, onnxruntime 1.23.2, opset 14, QDQ format
-> **Datasets**: COCO val2017 (5 000 images, 80 classes); private 4-class
-> document-layout dataset (2 964 val images, yolo11n trained on 23 783 images)
-> **Models tested**: yolov8n / yolov8s / yolov8m / yolo11n / yolov10n
-> **Date**: 2026-04-28
+> - **Hardware**: AMD EPYC 7J13, 16 cores, AVX2, `device=cpu`, `batch=1`, `imgsz=640`
+> - **Software**: ultralytics 8.3.40, onnxruntime 1.23.2, opset 14, QDQ format
+> - **Datasets**: COCO val2017 (5 000 images, 80 classes); private 4-class document-layout dataset (2 964 val images, yolo11n trained on 23 783 images)
+> - **Models tested**: yolov8n / yolov8s / yolov8m / yolo11n / yolov10n
+> - **Date**: 2026-04-28
 >
-> **All experimental scripts live under `tmp_embed/quant_coreset*/`**
-> (gitignored). Key code blocks are inlined in §10 below for reproducibility.
+> All experimental scripts live under `tmp_embed/quant_coreset*/` (gitignored). Key code blocks are inlined in §10 below for reproducibility.
 
 ---
 
 ## 1. TL;DR — Universal Recipe
 
-For **any YOLO version v5/v8/v9/v10/v11 (any size n/s/m/l/x), official or
-finetuned**, on ONNX Runtime CPU, the following recipe is empirically
-the best across all conditions tested:
+For **any YOLO version v5/v8/v9/v10/v11 (any size n/s/m/l/x), official or finetuned**, on ONNX Runtime CPU, the following recipe is empirically the best across all conditions tested:
 
 ```python
 import onnx
@@ -90,10 +81,7 @@ quantize_static(
 
 ![Cross-version retention](YOLO-INT8-PTQ-CALIBRATION-RECIPE.assets/fig04_cross_version.png)
 
-*Figure 4. Side-by-side bars of FP32 ONNX (blue) vs INT8 Tier S (gold)
-across the 5 (version, size) cells we ran on COCO val2017. Retention
-percentages annotated on the gold bars. The yolov10n* bar uses the
-extended head_exclude variant — without it, INT8 collapses to 0%.*
+*Figure 4. Side-by-side bars of FP32 ONNX (blue) vs INT8 Tier S (gold) across the 5 (version, size) cells we ran on COCO val2017. Retention percentages annotated on the gold bars. The yolov10n* bar uses the extended head_exclude variant — without it, INT8 collapses to 0%.*
 
 Seed-stable across 3 random seeds within ±0.15 pp.
 
@@ -103,9 +91,7 @@ The full self-contained quantization helper is in §10.
 
 ## List of Figures
 
-All figures are auto-generated from result JSONs by
-`YOLO-INT8-PTQ-CALIBRATION-RECIPE.assets/make_plots.py`; rerun that
-script to regenerate the PNGs after extending the experiment.
+All figures are auto-generated from result JSONs by `YOLO-INT8-PTQ-CALIBRATION-RECIPE.assets/make_plots.py`; rerun that script to regenerate the PNGs after extending the experiment.
 
 | # | Title | Section |
 |---:|---|---|
@@ -122,27 +108,15 @@ script to regenerate the PNGs after extending the experiment.
 
 ## 2. Why This Document Exists
 
-The companion `QUANTIZATION-EXPERIMENTS.md` settled what works
-**at fixed recipe** across YOLO families: per-channel + reduce_range
-+ S8w/U8a + QDQ + tail-24 exclude + 128 random calib images, with
-MinMax calibrator — the current Ultralytics-aligned baseline.
+The companion `QUANTIZATION-EXPERIMENTS.md` settled what works **at fixed recipe** across YOLO families: per-channel + reduce_range
++ S8w/U8a + QDQ + tail-24 exclude + 128 random calib images, with MinMax calibrator — the current Ultralytics-aligned baseline.
 
 **Two questions remained open** that this document answers:
 
-1. **Does the calibration data selection matter?** Specifically, do
-   embedding-based coresets (FPS / k-means / SelectQ) or
-   confidence-based selections (easy / hard examples) beat random?
-2. **Does the calibrator algorithm matter?** ONNX Runtime offers
-   MinMax, Entropy, Percentile, and Distribution; only MinMax has
-   been benchmarked for YOLO in literature, but vendor recipes
-   diverge wildly (Ultralytics says MinMax, OwLite says MSE,
-   NVIDIA says Entropy / Percentile depending on workload).
+1. **Does the calibration data selection matter?** Specifically, do embedding-based coresets (FPS / k-means / SelectQ) or confidence-based selections (easy / hard examples) beat random?
+2. **Does the calibrator algorithm matter?** ONNX Runtime offers MinMax, Entropy, Percentile, and Distribution; only MinMax has been benchmarked for YOLO in literature, but vendor recipes diverge wildly (Ultralytics says MinMax, OwLite says MSE, NVIDIA says Entropy / Percentile depending on workload).
 
-The findings in this document supersede the calibration recipe in
-`QUANTIZATION-EXPERIMENTS.md` (which used MinMax as default); the
-sweep results there are still valid for cross-family relative
-comparison, but for any new YOLO INT8 deployment, the recipe in §1
-above replaces "Recipe A" / "Recipe B" from that doc.
+The findings in this document supersede the calibration recipe in `QUANTIZATION-EXPERIMENTS.md` (which used MinMax as default); the sweep results there are still valid for cross-family relative comparison, but for any new YOLO INT8 deployment, the recipe in §1 above replaces "Recipe A" / "Recipe B" from that doc.
 
 ---
 
@@ -150,15 +124,8 @@ above replaces "Recipe A" / "Recipe B" from that doc.
 
 ### 3.1 Datasets
 
-- **COCO val2017**: 5 000 images, 80 classes, standard ult yaml.
-  Calibration pool drawn from COCO train2017 (118 287 images), seeded
-  random subset of 20 000 used for embedding-based selection
-  experiments; N=128 random subsamples drawn deterministically by
-  `random.Random(seed).sample(...)`.
-- **In-house 4-class** (`yolo_full_4label`): 23 783 train / 2 964 val
-  images, 4 classes (`figure`, `figure_cap`, `table`, `table_cap`),
-  yolo11n finetuned to FP32 mAP50 = 0.9568. Used to study the
-  "narrow / finetuned" data regime.
+- **COCO val2017**: 5 000 images, 80 classes, standard ult yaml. Calibration pool drawn from COCO train2017 (118 287 images), seeded random subset of 20 000 used for embedding-based selection experiments; N=128 random subsamples drawn deterministically by `random.Random(seed).sample(...)`.
+- **In-house 4-class** (`yolo_full_4label`): 23 783 train / 2 964 val images, 4 classes (`figure`, `figure_cap`, `table`, `table_cap`), yolo11n finetuned to FP32 mAP50 = 0.9568. Used to study the "narrow / finetuned" data regime.
 
 ### 3.2 Models
 
@@ -176,25 +143,19 @@ above replaces "Recipe A" / "Recipe B" from that doc.
 For each (model, calibration_list, recipe):
 
 1. Export FP32 ONNX with `dynamic=False, opset=14, simplify=True`.
-2. Apply `quant_pre_process` (with `skip_symbolic_shape=True` for v10
-   which has TopK that breaks symbolic shape inference).
+2. Apply `quant_pre_process` (with `skip_symbolic_shape=True` for v10 which has TopK that breaks symbolic shape inference).
 3. Run `quantize_static` (or our manual bypass for effective Entropy).
-4. Validate via `ultralytics.YOLO(int8_path).val(data=..., imgsz=640,
-   device='cpu', batch=1)` and record `mAP50`, `mAP50-95`, `precision`,
-   `recall`, `speed`.
+4. Validate via `ultralytics.YOLO(int8_path).val(data=..., imgsz=640, device='cpu', batch=1)` and record `mAP50`, `mAP50-95`, `precision`, `recall`, `speed`.
 
 ### 3.4 Reference baseline
 
-All retention numbers are computed against the **FP32 ONNX** of the
-same model (not against `.pt`), since that isolates the quantization
-loss from the FP32 ONNX export loss (which is itself ~0.2 pp).
+All retention numbers are computed against the **FP32 ONNX** of the same model (not against `.pt`), since that isolates the quantization loss from the FP32 ONNX export loss (which is itself ~0.2 pp).
 
 ---
 
 ## 4. Calibration Sampling Strategies Tested
 
-Ten distinct selection strategies, all with N=128 unless otherwise
-noted:
+Ten distinct selection strategies, all with N=128 unless otherwise noted:
 
 | ID | Algorithm | Source / motivation |
 |---|---|---|
@@ -210,9 +171,7 @@ noted:
 | `mixed128` | 64 FPS + 64 random | hybrid |
 | `selectq128` | SelectQ-lite (MIR 2025): k-means medoids in (emb.mean, emb.std) 2D feature space | recent paper |
 
-Each strategy was scripted in
-`tmp_embed/quant_coreset/02_select_coresets.py` (random / kmeans / fps)
-and `07_select_lit.py` (the literature-backed variants).
+Each strategy was scripted in `tmp_embed/quant_coreset/02_select_coresets.py` (random / kmeans / fps) and `07_select_lit.py` (the literature-backed variants).
 
 ---
 
@@ -227,19 +186,13 @@ and `07_select_lit.py` (the literature-backed variants).
 | `Distribution` | ONNX RT | FP8 only — not applicable to INT8 | `create_calibrator` |
 | `MSE` (custom) | OwLite-style | tested; matches MovingAvg, below Percentile | custom `MSECalibrater` subclass |
 
-**ONNX Runtime does not expose `num_bins` via `quantize_static.extra_options`** —
-the forwarded keys are only
-`{CalibTensorRangeSymmetric, CalibMovingAverage, CalibMovingAverageConstant, CalibMaxIntermediateOutputs, CalibPercentile}`. So to use effective Entropy
-or custom calibrators (MSE), one must instantiate the calibrater class
-manually and feed `tensors_range` into `QDQQuantizer`. See §10 for the
-bypass template.
+**ONNX Runtime does not expose `num_bins` via `quantize_static.extra_options`** — the forwarded keys are only `{CalibTensorRangeSymmetric, CalibMovingAverage, CalibMovingAverageConstant, CalibMaxIntermediateOutputs, CalibPercentile}`. So to use effective Entropy or custom calibrators (MSE), one must instantiate the calibrater class manually and feed `tensors_range` into `QDQQuantizer`. See §10 for the bypass template.
 
 ---
 
 ## 6. Quantizer Recipe Knobs Tested
 
-Every (calibrator, calib-list) combination was crossed with these
-recipe configurations:
+Every (calibrator, calib-list) combination was crossed with these recipe configurations:
 
 | ID | Calibrator | Symmetric | Moving-Avg | reduce_range | Head-exclude | Notes |
 |---|---|---|---|---|---|---|
@@ -253,20 +206,11 @@ recipe configurations:
 | **R7** | MinMax | True | False | True | DFL-only | Q-YOLO recommendation |
 | **R8** | MSE (custom) | True | — | True | tail-24 | OwLite recommendation |
 
-`R5_extended_exclude`: Tier S R5 with `HEAD_TAIL_K=60` and the extended
-op-type set covering v10's NMS-free postproc.
+`R5_extended_exclude`: Tier S R5 with `HEAD_TAIL_K=60` and the extended op-type set covering v10's NMS-free postproc.
 
 ![Recipe sweep on COCO yolov8n](YOLO-INT8-PTQ-CALIBRATION-RECIPE.assets/fig02_coco_recipe_sweep.png)
 
-*Figure 2. All 9 recipes (R0–R8) on COCO yolov8n + random500
-calibration, sorted by retention. The gold bar is Tier S. R3
-(`reduce_range=False`) is the lone catastrophe at 49.7% — every
-"reasonable" knob change still yielded ≥90%, but turning off
-reduce_range alone cuts the model in half. R7 (DFL-only exclude)
-and R1 (symmetric without other knobs) are slightly worse than
-the default R0; the recipe sweet spot is R5 (Percentile 99.999 +
-symmetric all on). R8 (custom MSE) ties with R2/R6 in the
-strong-alternative cluster but does not beat Percentile.*
+*Figure 2. All 9 recipes (R0–R8) on COCO yolov8n + random500 calibration, sorted by retention. The gold bar is Tier S. R3 (`reduce_range=False`) is the lone catastrophe at 49.7% — every "reasonable" knob change still yielded ≥90%, but turning off reduce_range alone cuts the model in half. R7 (DFL-only exclude) and R1 (symmetric without other knobs) are slightly worse than the default R0; the recipe sweet spot is R5 (Percentile 99.999 + symmetric all on). R8 (custom MSE) ties with R2/R6 in the strong-alternative cluster but does not beat Percentile.*
 
 ---
 
@@ -274,15 +218,11 @@ strong-alternative cluster but does not beat Percentile.*
 
 ### 7.1 ONNX Runtime 1.23 default Entropy ≡ MinMax (silent bug)
 
-`quantize_static(calibrate_method=Entropy)` with default options is
-**byte-identical** to `MinMax`. We confirmed by md5-comparing the
-output `.onnx` files of four (calib_list, calibrator) pairs — all
-matched.
+`quantize_static(calibrate_method=Entropy)` with default options is **byte-identical** to `MinMax`. We confirmed by md5-comparing the output `.onnx` files of four (calib_list, calibrator) pairs — all matched.
 
 **Root cause** (in `onnxruntime/quantization/calibrate.py`):
 
-`EntropyCalibrater` defaults `num_bins=128, num_quantized_bins=128`.
-Inside `get_entropy_threshold`:
+`EntropyCalibrater` defaults `num_bins=128, num_quantized_bins=128`. Inside `get_entropy_threshold`:
 
 ```python
 zero_bin_index = num_bins // 2                      # = 64
@@ -291,14 +231,9 @@ for i in range(num_half_quantized_bin, zero_bin_index + 1, 1):
     # range(64, 65, 1) → 1 iteration
 ```
 
-The KL search loop has a single candidate (full histogram range),
-which is then clamped to `(min_value, max_value)` at lines 1165-1168
-— the exact MinMax output.
+The KL search loop has a single candidate (full histogram range), which is then clamped to `(min_value, max_value)` at lines 1165-1168 — the exact MinMax output.
 
-**Fix**: bypass `quantize_static`. Build `EntropyCalibrater(num_bins=2048)`
-directly and feed `tensors_range` into `QDQQuantizer` (see §10). With
-`num_bins=2048` the KL search has 1 008 candidate thresholds and
-genuinely optimises clipping.
+**Fix**: bypass `quantize_static`. Build `EntropyCalibrater(num_bins=2048)` directly and feed `tensors_range` into `QDQQuantizer` (see §10). With `num_bins=2048` the KL search has 1 008 candidate thresholds and genuinely optimises clipping.
 
 **Empirical impact** (in-house yolo11n, 4 calib lists × 2 num_bins):
 
@@ -311,24 +246,15 @@ genuinely optimises clipping.
 
 ![Entropy default vs effective](YOLO-INT8-PTQ-CALIBRATION-RECIPE.assets/fig06_entropy_default_vs_effective.png)
 
-*Figure 6. The hatched grey bars (Entropy nb=128, the broken default) are
-exactly the height of the blue MinMax bars — they are byte-identical INT8
-outputs. The green bars (Entropy nb=2048, after our manual bypass) show
-the genuine KL calibration: hard128 jumps from 29.5% to 96.2%, random128
-from 64.4% to 92.4%. The "easy" cases (already low-outlier calib data)
-are barely affected because there's no tail for KL search to clip.*
+*Figure 6. The hatched grey bars (Entropy nb=128, the broken default) are exactly the height of the blue MinMax bars — they are byte-identical INT8 outputs. The green bars (Entropy nb=2048, after our manual bypass) show the genuine KL calibration: hard128 jumps from 29.5% to 96.2%, random128 from 64.4% to 92.4%. The "easy" cases (already low-outlier calib data) are barely affected because there's no tail for KL search to clip.*
 
 Verified probe at `tmp_embed/quant_coreset/12_probe_calibrator.py`.
 
 ### 7.2 Two-Regime Analysis: COCO vs Narrow Data
 
-The optimal sampling strategy depends on whether the data is rich
-(COCO-style, 80 classes, broad activation distribution) or narrow
-(in-house 4-class, finetuned to high confidence on a specific
-distribution).
+The optimal sampling strategy depends on whether the data is rich (COCO-style, 80 classes, broad activation distribution) or narrow (in-house 4-class, finetuned to high confidence on a specific distribution).
 
-**Empirical comparison** (yolov8n on COCO and yolo11n on in-house,
-both with N=128 calibration):
+**Empirical comparison** (yolov8n on COCO and yolo11n on in-house, both with N=128 calibration):
 
 | Sampling | COCO + MinMax | COCO + Percentile | Narrow + MinMax | Narrow + Percentile | Narrow + Entropy nb2048 |
 |---|---:|---:|---:|---:|---:|
@@ -340,63 +266,30 @@ both with N=128 calibration):
 
 ![In-house heatmap](YOLO-INT8-PTQ-CALIBRATION-RECIPE.assets/fig01_inhouse_sampling_calibrator_heatmap.png)
 
-*Figure 1. The in-house 9-sampling × 3-calibrator retention heatmap on the
-narrow 4-class dataset. The MinMax column has the largest spread (29% to
-97%) — this is the regime where calibration data selection matters most.
-The Entropy nb=2048 column tightens to 81-98%. The Percentile 99.999
-column is the most striking: random is the **best** strategy here (96%)
-while easy/fps/hard all collapse to 65-76%. The ranking is reversed
-relative to MinMax. Empty cells (—) were not run.*
+*Figure 1. The in-house 9-sampling × 3-calibrator retention heatmap on the narrow 4-class dataset. The MinMax column has the largest spread (29% to 97%) — this is the regime where calibration data selection matters most. The Entropy nb=2048 column tightens to 81-98%. The Percentile 99.999 column is the most striking: random is the **best** strategy here (96%) while easy/fps/hard all collapse to 65-76%. The ranking is reversed relative to MinMax. Empty cells (—) were not run.*
 
 ![Two-regime spread comparison](YOLO-INT8-PTQ-CALIBRATION-RECIPE.assets/fig05_two_regime.png)
 
-*Figure 5. Left (5a): the cross-sampling spread on the narrow dataset,
-broken down by calibrator. MinMax produces 67 pp of variation across
-sampling choices; effective Entropy compresses to 17 pp; Percentile sits
-in the middle at 31 pp but with a flipped ranking. The COCO bar is added
-for comparison — on rich data, calibrator + sampling differences
-together produce only ~2 pp of spread. Right (5b): direct comparison of
-the four (regime, calibrator, sample) cells the recipe must navigate.
-The pair "Narrow + Percentile + easy128" is a footgun (75.8%); switch
-that to random128 and you get 96.0%. The same pair under MinMax is the
-opposite — easy beats random.*
+*Figure 5. Left (5a): the cross-sampling spread on the narrow dataset, broken down by calibrator. MinMax produces 67 pp of variation across sampling choices; effective Entropy compresses to 17 pp; Percentile sits in the middle at 31 pp but with a flipped ranking. The COCO bar is added for comparison — on rich data, calibrator + sampling differences together produce only ~2 pp of spread. Right (5b): direct comparison of the four (regime, calibrator, sample) cells the recipe must navigate. The pair "Narrow + Percentile + easy128" is a footgun (75.8%); switch that to random128 and you get 96.0%. The same pair under MinMax is the opposite — easy beats random.*
 
-**Key insight**: on rich/COCO data, every reasonable sampling strategy
-gives 95-98% under any reasonable calibrator (spread ≤ 2 pp). On narrow
-data, sampling strategy and calibrator have **strong interaction**:
+**Key insight**: on rich/COCO data, every reasonable sampling strategy gives 95-98% under any reasonable calibrator (spread ≤ 2 pp). On narrow data, sampling strategy and calibrator have **strong interaction**:
 
-- Under MinMax: smart selection (easy / FPS) recovers the bad random
-  baseline (64% → 97%) because random includes outlier images that
-  inflate the MinMax range.
-- Under Percentile: the order **reverses** — random beats easy by
-  20 pp! Percentile clips the top 0.001% of activations, so it needs
-  some outlier samples in the calib set to clip. Smart selection
-  (easy / fps) removes the outliers, leaving Percentile to clip
-  legitimate activations and shrink the range too tight.
-- Under Entropy nb=2048: all strategies cluster at 92-98% (KL
-  optimisation doesn't depend on outlier presence).
+- Under MinMax: smart selection (easy / FPS) recovers the bad random baseline (64% → 97%) because random includes outlier images that inflate the MinMax range.
+- Under Percentile: the order **reverses** — random beats easy by 20 pp! Percentile clips the top 0.001% of activations, so it needs some outlier samples in the calib set to clip. Smart selection (easy / fps) removes the outliers, leaving Percentile to clip legitimate activations and shrink the range too tight.
+- Under Entropy nb=2048: all strategies cluster at 92-98% (KL optimisation doesn't depend on outlier presence).
 
-**Practical consequence**: random128 is the safe choice for both
-regimes when paired with Percentile 99.999. Smart selection (easy /
-FPS) is **counter-productive** under Percentile. The Tier S recipe
-works on both regimes for different reasons:
+**Practical consequence**: random128 is the safe choice for both regimes when paired with Percentile 99.999. Smart selection (easy / FPS) is **counter-productive** under Percentile. The Tier S recipe works on both regimes for different reasons:
 
 - COCO: random covers the diverse activation distribution
-- Narrow: random includes the few outliers that Percentile needs to
-  clip, sized to fit the typical val distribution
+- Narrow: random includes the few outliers that Percentile needs to clip, sized to fit the typical val distribution
 
 ### 7.3 Head-exclusion: unified pattern works across architectures
 
 For v8/v11/v9 the standard tail-24 + 10-op exclude set is sufficient.
 
-For v10 (NMS-free top-300 head with TopK / GatherElements / GatherND
-/ Mod / Equal / Sign in the postprocessing tail), the v8 exclude set
-is **insufficient** — every recipe collapses INT8 mAP to **0%**
-because ORT inserts QDQ around ops that mathematically can't tolerate
-quantization.
+For v10 (NMS-free top-300 head with TopK / GatherElements / GatherND / Mod / Equal / Sign in the postprocessing tail), the v8 exclude set is **insufficient** — every recipe collapses INT8 mAP to **0%** because ORT inserts QDQ around ops that mathematically can't tolerate quantization.
 
-The fix is to expand both the window (tail-24 → tail-60) and the
-op-type set:
+The fix is to expand both the window (tail-24 → tail-60) and the op-type set:
 
 ```python
 HEAD_TAIL_K = 60
@@ -416,11 +309,9 @@ We **verified** this expanded pattern is harmless on v8/v11:
 | yolov8n | 0.5025 | 0.5016 | -0.18 pp (within seed noise) |
 | yolov10n | 0.0000 (collapse!) | 0.5083 | **+95.7 pp** |
 
-Therefore: **always use the extended pattern**. Architecture detection
-is unnecessary.
+Therefore: **always use the extended pattern**. Architecture detection is unnecessary.
 
-For v10 export specifically, also pass `skip_symbolic_shape=True` to
-`quant_pre_process` — TopK trips ORT 1.23's symbolic shape inferencer:
+For v10 export specifically, also pass `skip_symbolic_shape=True` to `quant_pre_process` — TopK trips ORT 1.23's symbolic shape inferencer:
 
 ```python
 try:
@@ -431,17 +322,11 @@ except Exception:
 
 ### 7.4 `reduce_range=False` is catastrophic on ORT 1.23 CPU
 
-Current vendor literature (NVIDIA, Microsoft) suggests
-`reduce_range=False` is fine on modern AVX-VNNI CPUs (Ice Lake+,
-Zen 4+) and gives an extra bit of activation precision. **In our
-ORT 1.23 + COCO + yolov8n test, this dropped retention from 96.3% to
-49.7% — reproducible catastrophic collapse.**
+Current vendor literature (NVIDIA, Microsoft) suggests `reduce_range=False` is fine on modern AVX-VNNI CPUs (Ice Lake+, Zen 4+) and gives an extra bit of activation precision. **In our ORT 1.23 + COCO + yolov8n test, this dropped retention from 96.3% to 49.7% — reproducible catastrophic collapse.**
 
-Despite the literature claim, every other knob we tested (symmetric,
-moving_avg, calibrator) was unable to compensate. So:
+Despite the literature claim, every other knob we tested (symmetric, moving_avg, calibrator) was unable to compensate. So:
 
-- **Always set `reduce_range=True`** on ORT 1.23 CPU EP, regardless
-  of CPU capability flags.
+- **Always set `reduce_range=True`** on ORT 1.23 CPU EP, regardless of CPU capability flags.
 - This may change in ORT >= 1.24. Re-verify if upgrading.
 
 ### 7.5 Size scaling on yolov8
@@ -454,17 +339,9 @@ moving_avg, calibrator) was unable to compensate. So:
 
 ![Size scaling](YOLO-INT8-PTQ-CALIBRATION-RECIPE.assets/fig03_size_scaling.png)
 
-*Figure 3. yolov8 size-scaling on COCO val2017. Both axes are real
-mAP50 — blue = FP32 ONNX, gold = INT8 Tier S. The dashed green line
-on the right axis is the retention percentage; it climbs from 96.5%
-(n) → 98.3% (s) → 98.5% (m). The gap between FP32 and INT8 (the
-"PTQ tax") shrinks rapidly as the model grows.*
+*Figure 3. yolov8 size-scaling on COCO val2017. Both axes are real mAP50 — blue = FP32 ONNX, gold = INT8 Tier S. The dashed green line on the right axis is the retention percentage; it climbs from 96.5% (n) → 98.3% (s) → 98.5% (m). The gap between FP32 and INT8 (the "PTQ tax") shrinks rapidly as the model grows.*
 
-Larger models suffer less from PTQ — the size dimension matters more
-than the calibrator dimension within the Tier S family. **For
-production deployments, prioritise running the smallest size that
-hits the latency budget at FP32 first; the INT8 "retention budget"
-is more forgiving at larger sizes.**
+Larger models suffer less from PTQ — the size dimension matters more than the calibrator dimension within the Tier S family. **For production deployments, prioritise running the smallest size that hits the latency budget at FP32 first; the INT8 "retention budget" is more forgiving at larger sizes.**
 
 ### 7.6 Seed stability
 
@@ -478,26 +355,15 @@ R5 (Tier S) on yolov8n + COCO + random128 across three random seeds:
 
 ![Seed stability](YOLO-INT8-PTQ-CALIBRATION-RECIPE.assets/fig07_seed_stability.png)
 
-*Figure 7. Three independently-seeded Tier S runs on yolov8n + COCO +
-random128. The shaded band is ±0.15 pp around the mean. The result is
-robust to the random sample drawn — there is no need to ensemble multiple
-seeded calibrations.*
+*Figure 7. Three independently-seeded Tier S runs on yolov8n + COCO + random128. The shaded band is ±0.15 pp around the mean. The result is robust to the random sample drawn — there is no need to ensemble multiple seeded calibrations.*
 
 Spread ±0.15 pp. Tier S is not a seed artifact.
 
 ### 7.7 MSE calibrator does not beat Percentile on this stack
 
-OwLite (SqueezeBits) reports MSE as best for v8/v11. We implemented a
-custom `MSECalibrater` (subclass of `EntropyCalibrater` with the
-threshold-search swapped to MSE-of-quantize-dequantize): result on
-yolov8n + COCO + random128 = **95.7% — tied with R2 (MinMax + moving
-avg + symmetric), 0.8 pp below Tier S**.
+OwLite (SqueezeBits) reports MSE as best for v8/v11. We implemented a custom `MSECalibrater` (subclass of `EntropyCalibrater` with the threshold-search swapped to MSE-of-quantize-dequantize): result on yolov8n + COCO + random128 = **95.7% — tied with R2 (MinMax + moving avg + symmetric), 0.8 pp below Tier S**.
 
-This contradicts the OwLite claim. Possible explanations: their
-benchmark used different `num_bins`, head-exclude patterns,
-calibration count, or ONNX RT version. Either way, on our stack
-**MSE is not Tier S**. Documented in
-`tmp_embed/quant_coreset_v8n_coco/08_quantize_mse.py`.
+This contradicts the OwLite claim. Possible explanations: their benchmark used different `num_bins`, head-exclude patterns, calibration count, or ONNX RT version. Either way, on our stack **MSE is not Tier S**. Documented in `tmp_embed/quant_coreset_v8n_coco/08_quantize_mse.py`.
 
 ### 7.8 Other rule-outs
 
@@ -537,14 +403,11 @@ quantize_static(
 )
 ```
 
-Calibration cost ≈ 4 min for N=128, 15 min for N=500 on a 16-core CPU.
-N=128 is empirically sufficient (random500 buys < 0.5 pp at most).
+Calibration cost ≈ 4 min for N=128, 15 min for N=500 on a 16-core CPU. N=128 is empirically sufficient (random500 buys < 0.5 pp at most).
 
 ### Tier A — Strong alternatives
 
-1. **MinMax + symmetric + moving-average** (R2). Within 0.5 pp of
-   Tier S on COCO. Faster calibration (~1 min). Use when
-   Percentile is unavailable in the deploy stack:
+1. **MinMax + symmetric + moving-average** (R2). Within 0.5 pp of Tier S on COCO. Faster calibration (~1 min). Use when Percentile is unavailable in the deploy stack:
 
    ```python
    extra_options={
@@ -557,25 +420,13 @@ N=128 is empirically sufficient (random500 buys < 0.5 pp at most).
    # calibrate_method=CalibrationMethod.MinMax
    ```
 
-2. **Effective Entropy nb=2048 + symmetric** (R6). Requires bypass
-   (see §10). Slower (~20 min on N=500). **Best for narrow finetuned
-   datasets** where random128 has wide activation spread under
-   Percentile — but the empirical retention difference vs Tier S is
-   small (96.0% vs 96.0% on in-house). Use only if Tier S
-   underperforms.
+2. **Effective Entropy nb=2048 + symmetric** (R6). Requires bypass (see §10). Slower (~20 min on N=500). **Best for narrow finetuned datasets** where random128 has wide activation spread under Percentile — but the empirical retention difference vs Tier S is small (96.0% vs 96.0% on in-house). Use only if Tier S underperforms.
 
-3. **MinMax + asymmetric default** (R0, the Ultralytics-aligned
-   recipe). Safe baseline; ~1 pp below Tier S on COCO; **fails badly
-   on narrow data with random128 (64.4%)**, requires smart-coreset
-   selection (easy128 → 96.8%) to recover.
+3. **MinMax + asymmetric default** (R0, the Ultralytics-aligned recipe). Safe baseline; ~1 pp below Tier S on COCO; **fails badly on narrow data with random128 (64.4%)**, requires smart-coreset selection (easy128 → 96.8%) to recover.
 
 ### Tier B — Fallback only
 
-**MinMax + asymmetric + smart-coreset (easy128 / fps128)**. Use only
-when the calibrator is locked to default MinMax (legacy pipelines)
-AND the dataset is narrow / heavily finetuned. Easy128 selection
-recovers narrow-data retention from 64% to 96.8% under default
-MinMax. Recipe:
+**MinMax + asymmetric + smart-coreset (easy128 / fps128)**. Use only when the calibrator is locked to default MinMax (legacy pipelines) AND the dataset is narrow / heavily finetuned. Easy128 selection recovers narrow-data retention from 64% to 96.8% under default MinMax. Recipe:
 
 ```python
 # Build easy128 from cached per-image max_conf:
@@ -601,8 +452,7 @@ easy128 = [paths[i] for i in order[:128]]
 
 ## 9. Per-(Version, Size) Recommended Recipe
 
-The Tier S recipe is identical across all versions and sizes; the
-only special handling is for v10's preprocessing.
+The Tier S recipe is identical across all versions and sizes; the only special handling is for v10's preprocessing.
 
 ```python
 # === Generic INT8 PTQ helper. Drop into any project ===
@@ -741,10 +591,7 @@ yolo_int8_quantize('yolov8n.pt', 'yolov8n_int8.onnx', calib)
 
 ### Per-architecture expected retention (mAP50 vs FP32 ONNX)
 
-This table is what to expect when you apply the universal Tier S
-recipe above. Numbers measured on COCO val2017 (5 000 images) with
-the actual config used in this study; private-dataset numbers are
-from the in-house 4-class layout dataset.
+This table is what to expect when you apply the universal Tier S recipe above. Numbers measured on COCO val2017 (5 000 images) with the actual config used in this study; private-dataset numbers are from the in-house 4-class layout dataset.
 
 | Model | FP32 mAP50 | INT8 mAP50 | Retention | Notes |
 |---|---:|---:|---:|---|
@@ -764,35 +611,16 @@ from the in-house 4-class layout dataset.
 
 ### Special cases requiring per-version awareness
 
-- **v10 / v12 / future NMS-free variants**: Always test the export
-  pipeline first. If `quant_pre_process` raises
-  `Incomplete symbolic shape inference`, retry with
-  `skip_symbolic_shape=True`. The unified extended head_exclude
-  pattern handles the postproc ops; do **not** use a smaller exclude
-  window.
-- **v6**: RepVGG-style fused conv has wider activation ranges; OwLite
-  reports Percentile 99.9 beats 99.999. If Tier S retention is
-  unexpectedly low (<95%), switch `CalibPercentile` to 99.9.
-- **v5 SiLU stem**: NVIDIA reports v5s INT8 collapsing from 36.2 to
-  5.4 mAP under naive PTQ; recovered to 31.6 with the SiLU TRT
-  plugin. If deploying v5* via TRT and seeing collapse, use the
-  plugin path instead.
-- **Heavily finetuned narrow datasets** (≤ 5 classes, > 90% FP32
-  mAP): Tier S still works (verified at 96.0% on our 4-class
-  dataset). If retention is < 90%, try Effective Entropy nb=2048
-  (Tier A option 2) — its KL objective is robust to outliers in
-  narrow distributions.
+- **v10 / v12 / future NMS-free variants**: Always test the export pipeline first. If `quant_pre_process` raises `Incomplete symbolic shape inference`, retry with `skip_symbolic_shape=True`. The unified extended head_exclude pattern handles the postproc ops; do **not** use a smaller exclude window.
+- **v6**: RepVGG-style fused conv has wider activation ranges; OwLite reports Percentile 99.9 beats 99.999. If Tier S retention is unexpectedly low (<95%), switch `CalibPercentile` to 99.9.
+- **v5 SiLU stem**: NVIDIA reports v5s INT8 collapsing from 36.2 to 5.4 mAP under naive PTQ; recovered to 31.6 with the SiLU TRT plugin. If deploying v5* via TRT and seeing collapse, use the plugin path instead.
+- **Heavily finetuned narrow datasets** (≤ 5 classes, > 90% FP32 mAP): Tier S still works (verified at 96.0% on our 4-class dataset). If retention is < 90%, try Effective Entropy nb=2048 (Tier A option 2) — its KL objective is robust to outliers in narrow distributions.
 
 ### Quick recipe selection flowchart
 
 ![Decision flow](YOLO-INT8-PTQ-CALIBRATION-RECIPE.assets/fig08_decision_flow.png)
 
-*Figure 8. Pick the YOLO family branch (top row), apply the
-corresponding configuration tweak (middle row), then check whether the
-dataset is narrow / heavily-finetuned (bottom row). For the v8 / v9 /
-v11 family on rich data, Tier S works without any further tweaks. The
-narrow-data branch flags the Tier-A "Effective Entropy nb=2048" fall-
-back if Tier S retention is below 90%.*
+*Figure 8. Pick the YOLO family branch (top row), apply the corresponding configuration tweak (middle row), then check whether the dataset is narrow / heavily-finetuned (bottom row). For the v8 / v9 / v11 family on rich data, Tier S works without any further tweaks. The narrow-data branch flags the Tier-A "Effective Entropy nb=2048" fall- back if Tier S retention is below 90%.*
 
 ASCII fallback (for terminal viewers):
 
@@ -823,10 +651,7 @@ ASCII fallback (for terminal viewers):
 
 ## 10. Reusable Quantization Module
 
-The complete self-contained script for Tier S (above in §9) is
-production-ready. For the **Effective Entropy nb=2048 bypass**
-(Tier A option 2), use this template — it bypasses
-`quantize_static`'s lack of `num_bins` exposure:
+The complete self-contained script for Tier S (above in §9) is production-ready. For the **Effective Entropy nb=2048 bypass** (Tier A option 2), use this template — it bypasses `quantize_static`'s lack of `num_bins` exposure:
 
 ```python
 import tempfile
@@ -906,32 +731,16 @@ def yolo_int8_quantize_entropy_nb2048(pre_onnx, output_int8,
 
 ## 11. Worth Trying (Not Tested In This Study)
 
-These configs were flagged by the literature survey but not run.
-They might give modest upside on top of Tier S — none are required
-for production.
+These configs were flagged by the literature survey but not run. They might give modest upside on top of Tier S — none are required for production.
 
-- **CrossLayerEqualization + AdaRound** (Qualcomm AIMET / AMD Quark
-  pipelines). Reported 1-3 mAP point improvement on YOLO-X and
-  YOLOv8 over plain PTQ. Requires switching to AIMET or Quark
-  framework — significant integration cost.
-- **SmoothQuant alpha 0.5** (Intel Neural Compressor). Improves
-  activation distribution before quantization; auto-tunable.
-  Available in `quantize_static`'s `extra_options` via
-  `SmoothQuant: True`, `SmoothQuantAlpha: 0.5`. **Worth a quick
-  test on top of Tier S**.
-- **Mixed precision** (FP16 detection head + INT8 backbone+neck).
-  Q-YOLO finds the DFL conv + final regression conv are the
-  dominant accuracy bottlenecks. Requires manual node-level
-  selection.
-- **Bias correction** (NNCF / AIMET). Small free upside if available
-  in the deploy stack.
-- **YOLOv6-specific**: try `CalibPercentile=99.9` (one nine) as
-  OwLite reports.
+- **CrossLayerEqualization + AdaRound** (Qualcomm AIMET / AMD Quark pipelines). Reported 1-3 mAP point improvement on YOLO-X and YOLOv8 over plain PTQ. Requires switching to AIMET or Quark framework — significant integration cost.
+- **SmoothQuant alpha 0.5** (Intel Neural Compressor). Improves activation distribution before quantization; auto-tunable. Available in `quantize_static`'s `extra_options` via `SmoothQuant: True`, `SmoothQuantAlpha: 0.5`. **Worth a quick test on top of Tier S**.
+- **Mixed precision** (FP16 detection head + INT8 backbone+neck). Q-YOLO finds the DFL conv + final regression conv are the dominant accuracy bottlenecks. Requires manual node-level selection.
+- **Bias correction** (NNCF / AIMET). Small free upside if available in the deploy stack.
+- **YOLOv6-specific**: try `CalibPercentile=99.9` (one nine) as OwLite reports.
 - **YOLOv5-specific**: SiLU TRT plugin if deploying via TensorRT.
 
-These items are also tracked in
-`/home/ubuntu/.claude/projects/-data-yolov8/memory/reference_yolo_int8_recipe.md`
-under "Worth trying for further upside".
+These items are also tracked in `/home/ubuntu/.claude/projects/-data-yolov8/memory/reference_yolo_int8_recipe.md` under "Worth trying for further upside".
 
 ---
 
@@ -939,8 +748,7 @@ under "Worth trying for further upside".
 
 ### 12.1 In-house yolo11n 4-class — full (sampling × calibrator) matrix
 
-FP32 ONNX baseline: mAP50 = 0.9568, mAP50-95 = 0.8742.
-All INT8 = 3.0 MB (3.46× compression vs 10.5 MB FP32 ONNX).
+FP32 ONNX baseline: mAP50 = 0.9568, mAP50-95 = 0.8742. All INT8 = 3.0 MB (3.46× compression vs 10.5 MB FP32 ONNX).
 
 ```
                 MinMax    Entropy nb=128   Entropy nb=2048   Percentile 99.999
@@ -961,9 +769,7 @@ kmeans2048    0.1944 (20.3%)              -                -                -
 fps2048       0.0525 ( 5.5%)              -    0.9379 (98.0%)              -
 ```
 
-Spread across 9 strategies under MinMax: 67.3 pp.
-Spread across 10 strategies under Entropy nb=2048: 17.2 pp.
-Spread across 4 strategies under Percentile 99.999: 31.2 pp (note: rank reverses!).
+Spread across 9 strategies under MinMax: 67.3 pp. Spread across 10 strategies under Entropy nb=2048: 17.2 pp. Spread across 4 strategies under Percentile 99.999: 31.2 pp (note: rank reverses!).
 
 ### 12.2 COCO yolov8n + random calibration — recipe knob sweep
 
@@ -1035,71 +841,35 @@ Spread ±0.15 pp.
 
 ### Key papers and vendor docs surveyed
 
-- **SelectQ** (Liu et al., MIR 2025): layer-wise k-means clustering for
-  calibration data selection; cited in §4 (selectq128 strategy).
-- **Dataset Quantization** (Zhou et al., ICCV 2023): submodular bin-based
-  coreset selection; supports our finding that selection differences
-  shrink with sufficient num_bins.
-- **CL-Calib** (Shang et al., CVPR 2024): contrastive calibration objective
-  as orthogonal upgrade.
-- **Q-YOLO / MPQ-YOLO** (Wang et al., Neurocomputing 2023): identifies
-  DFL softmax-and-conv as the dominant accuracy bottleneck (motivated
-  R7 DFL-only exclude experiment).
-- **NVIDIA TensorRT Integer Quantization Whitepaper** (arXiv 2004.09602):
-  "no single calibrator dominates; entropy / 99.99% / 99.999% all
-  competitive depending on workload" — consistent with our finding that
-  Percentile 99.999 wins on YOLO specifically.
-- **OwLite YOLO PTQ** (SqueezeBits blog): MSE calibrator + Percentile
-  99.9 for v6; tested in §7.7, did not replicate on our stack.
-- **NVIDIA TensorRT issue #1114**: YOLOv5 SiLU stem INT8 collapse;
-  noted in §9 "Special cases".
-- **Ultralytics community forum** (post #977): MinMax is the empirical
-  best calibrator for v5/v8/v9/v11 in their TensorRT export — consistent
-  with our finding that R0 (MinMax default) is within ~1 pp of Tier S
-  on COCO official weights.
-- **Microsoft ONNX Runtime quantization docs**: source-of-truth for
-  `quantize_static` API; the missing-`num_bins` quirk is undocumented.
+- **SelectQ** (Liu et al., MIR 2025): layer-wise k-means clustering for calibration data selection; cited in §4 (selectq128 strategy).
+- **Dataset Quantization** (Zhou et al., ICCV 2023): submodular bin-based coreset selection; supports our finding that selection differences shrink with sufficient num_bins.
+- **CL-Calib** (Shang et al., CVPR 2024): contrastive calibration objective as orthogonal upgrade.
+- **Q-YOLO / MPQ-YOLO** (Wang et al., Neurocomputing 2023): identifies DFL softmax-and-conv as the dominant accuracy bottleneck (motivated R7 DFL-only exclude experiment).
+- **NVIDIA TensorRT Integer Quantization Whitepaper** (arXiv 2004.09602): "no single calibrator dominates; entropy / 99.99% / 99.999% all competitive depending on workload" — consistent with our finding that Percentile 99.999 wins on YOLO specifically.
+- **OwLite YOLO PTQ** (SqueezeBits blog): MSE calibrator + Percentile 99.9 for v6; tested in §7.7, did not replicate on our stack.
+- **NVIDIA TensorRT issue #1114**: YOLOv5 SiLU stem INT8 collapse; noted in §9 "Special cases".
+- **Ultralytics community forum** (post #977): MinMax is the empirical best calibrator for v5/v8/v9/v11 in their TensorRT export — consistent with our finding that R0 (MinMax default) is within ~1 pp of Tier S on COCO official weights.
+- **Microsoft ONNX Runtime quantization docs**: source-of-truth for `quantize_static` API; the missing-`num_bins` quirk is undocumented.
 
 ### Memory references
 
 The findings are also persisted under:
 
-- `~/.claude/projects/-data-yolov8/memory/reference_yolo_int8_recipe.md`:
-  the universal Tier S recipe, expected retention, and architecture
-  caveats — for future Claude sessions.
-- `~/.claude/projects/-data-yolov8/memory/reference_onnxrt_entropy_quirk.md`:
-  the ORT 1.23 default-Entropy bug with reproduction steps.
+- `~/.claude/projects/-data-yolov8/memory/reference_yolo_int8_recipe.md`: the universal Tier S recipe, expected retention, and architecture caveats — for future Claude sessions.
+- `~/.claude/projects/-data-yolov8/memory/reference_onnxrt_entropy_quirk.md`: the ORT 1.23 default-Entropy bug with reproduction steps.
 
 ---
 
 ## 14. Conclusion
 
-**The calibration sampling and calibrator-config story for YOLO INT8
-PTQ on ONNX Runtime is settled** for the practical operating envelope
-(any v5/v8/v9/v10/v11 size n through m, any deployment-relevant
-dataset). The Tier S recipe in §1 / §9 is what to use.
+**The calibration sampling and calibrator-config story for YOLO INT8 PTQ on ONNX Runtime is settled** for the practical operating envelope (any v5/v8/v9/v10/v11 size n through m, any deployment-relevant dataset). The Tier S recipe in §1 / §9 is what to use.
 
-The most surprising findings — and the ones that should change how
-this is taught — are:
+The most surprising findings — and the ones that should change how this is taught — are:
 
-1. **The default Entropy calibrator is silently broken** in ORT 1.23
-   (and prior versions back at least to 1.18, based on the unchanged
-   source). The fix requires a code-path bypass; documenting this
-   alone is worth the study.
-2. **"Smart" calibration sampling (FPS / k-means / SelectQ /
-   confidence-based) is at best neutral and often actively
-   counter-productive** under the right calibrator. The simplest
-   answer (random N=128) is the right one.
-3. **`reduce_range=False` is catastrophic on ORT 1.23 CPU** despite
-   vendor literature suggesting it's safe on modern AVX-VNNI CPUs.
-4. **Calibrator and sampling strategy interact strongly on narrow
-   datasets** — smart sampling rescues bad calibrator (MinMax + easy)
-   AND breaks good calibrator (Percentile + easy). Always change
-   them together, never one in isolation.
-5. **Larger model sizes are more PTQ-robust** — for a fixed accuracy
-   budget, prefer scaling up rather than tuning calibrator further.
+1. **The default Entropy calibrator is silently broken** in ORT 1.23 (and prior versions back at least to 1.18, based on the unchanged source). The fix requires a code-path bypass; documenting this alone is worth the study.
+2. **"Smart" calibration sampling (FPS / k-means / SelectQ / confidence-based) is at best neutral and often actively counter-productive** under the right calibrator. The simplest answer (random N=128) is the right one.
+3. **`reduce_range=False` is catastrophic on ORT 1.23 CPU** despite vendor literature suggesting it's safe on modern AVX-VNNI CPUs.
+4. **Calibrator and sampling strategy interact strongly on narrow datasets** — smart sampling rescues bad calibrator (MinMax + easy) AND breaks good calibrator (Percentile + easy). Always change them together, never one in isolation.
+5. **Larger model sizes are more PTQ-robust** — for a fixed accuracy budget, prefer scaling up rather than tuning calibrator further.
 
-Future work is incremental: third-party-framework PTQ (AIMET, NNCF,
-Quark) for additional 1-3 pp upside; QAT for the last mile; mixed
-precision for genuine accuracy bottlenecks. None of these are
-required to ship.
+Future work is incremental: third-party-framework PTQ (AIMET, NNCF, Quark) for additional 1-3 pp upside; QAT for the last mile; mixed precision for genuine accuracy bottlenecks. None of these are required to ship.
