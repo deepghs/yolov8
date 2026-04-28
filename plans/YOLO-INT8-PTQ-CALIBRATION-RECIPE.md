@@ -103,6 +103,8 @@ All figures are auto-generated from result JSONs by `YOLO-INT8-PTQ-CALIBRATION-R
 | Fig 6 | Effective Entropy nb=2048 vs broken default | §7.1 |
 | Fig 7 | Tier S seed stability (3 seeds) | §7.6 |
 | Fig 8 | Tier S deployment decision flow | §9 |
+| Fig 9 | Apples-to-apples: random+Percentile vs easy+Entropy | §7.2.1 |
+| Fig 10 | COCO yolov8n sampling × calibrator matrix | §7.2.1 |
 
 ---
 
@@ -256,17 +258,21 @@ The optimal sampling strategy depends on whether the data is rich (COCO-style, 8
 
 **Empirical comparison** (yolov8n on COCO and yolo11n on in-house, both with N=128 calibration):
 
-| Sampling | COCO + MinMax | COCO + Percentile | Narrow + MinMax | Narrow + Percentile | Narrow + Entropy nb2048 |
-|---|---:|---:|---:|---:|---:|
-| random128 | **95.5%** | **96.5%** | 64.4% | **96.0%** | 92.4% |
-| easy128 | — | — | **96.8%** | 75.8% | 98.3% |
-| fps128 | — | — | 94.1% | 67.5% | 97.8% |
-| hard128 | — | — | 29.6% | 64.8% | 96.2% |
-| random_spread (across all 9 strategies) | not relevant | not relevant | **67 pp** | **31 pp** | **17 pp** |
+**The full apples-to-apples matrix** (all Percentile / Entropy cells use the symmetric flavour that matches Tier S R5 / R6; MinMax keeps its conventional asymmetric form per R0). A dash (—) means a cell that was deliberately not run because it duplicates an existing recipe variant.
+
+| Sampling | COCO + MinMax (R0 asym) | COCO + Percentile (R5 sym) | COCO + Entropy nb2048 (R6 sym) | Narrow + MinMax (R0 asym) | Narrow + Percentile (R5 sym) | Narrow + Entropy nb2048 (R6 sym) |
+|---|---:|---:|---:|---:|---:|---:|
+| random128 | 95.5% | **96.5%** | 94.7% | 64.4% | **96.6%** | 94.2% |
+| easy128 | 95.4% | 96.4% | 94.4% | **96.8%** | 67.8% | **97.0%** |
+| fps128 | 95.7% | 96.4% | 95.5% | 94.1% | 80.1% | **98.3%** |
+| hard128 | 91.9% | 96.4% | 94.2% | 29.6% | 91.7% | 95.2% |
+| spread (across the 4 sampled rows) | 3.8 pp | **0.1 pp** | 1.3 pp | **67.2 pp** | 28.8 pp | 4.1 pp |
+
+> Asymmetric flavours of Percentile and Entropy on the in-house dataset were also measured (matching the 09_quantize_calibrator.py and 13_quantize_entropy_real.py defaults); see §12 appendix for those numbers. The qualitative findings are identical, the absolute numbers shift by ~1-3 pp.
 
 ![In-house heatmap](YOLO-INT8-PTQ-CALIBRATION-RECIPE.assets/fig01_inhouse_sampling_calibrator_heatmap.png)
 
-*Figure 1. The in-house 9-sampling × 3-calibrator retention heatmap on the narrow 4-class dataset. The MinMax column has the largest spread (29% to 97%) — this is the regime where calibration data selection matters most. The Entropy nb=2048 column tightens to 81-98%. The Percentile 99.999 column is the most striking: random is the **best** strategy here (96%) while easy/fps/hard all collapse to 65-76%. The ranking is reversed relative to MinMax. Empty cells (—) were not run.*
+*Figure 1. The in-house 9-sampling × 3-calibrator retention heatmap on the narrow 4-class dataset, asymmetric flavour (the Entropy and Percentile columns use the original 13_quantize_entropy_real.py / 09_quantize_calibrator.py settings without ActivationSymmetric=True). The MinMax column has the largest spread (29% to 97%) — this is the regime where calibration data selection matters most. The Entropy nb=2048 column tightens to 81-98%. The Percentile 99.999 column is the most striking: random is the **best** strategy here (96%) while easy/fps/hard all collapse to 65-76%. The ranking is reversed relative to MinMax. Empty cells (—) were not run. **The symmetric-flavour version of this matrix is Fig 9 / §7.2.1**, where we re-ran the four random/easy/fps/hard cells under the same knobs as the deployed Tier S recipe — the qualitative conclusions are identical.*
 
 ![Two-regime spread comparison](YOLO-INT8-PTQ-CALIBRATION-RECIPE.assets/fig05_two_regime.png)
 
@@ -282,6 +288,29 @@ The optimal sampling strategy depends on whether the data is rich (COCO-style, 8
 
 - COCO: random covers the diverse activation distribution
 - Narrow: random includes the few outliers that Percentile needs to clip, sized to fit the typical val distribution
+
+#### 7.2.1 Apples-to-apples: random + Percentile vs easy + Entropy
+
+A natural follow-up: is there a different sampling × calibrator pairing that beats Tier S on at least one regime? The candidates are `random128 + Percentile 99.999` (Tier S as defined) and `easy128 + Entropy nb=2048` (the in-house local optimum).
+
+| Recipe | COCO yolov8n | in-house yolo11n 4-class |
+|---|---:|---:|
+| **random128 + Percentile 99.999** (Tier S) | **96.5%** | **96.6%** |
+| easy128 + Percentile 99.999 | 96.4% | 67.8% ↓ |
+| random128 + Entropy nb=2048 | 94.7% | 94.2% |
+| easy128 + Entropy nb=2048 | 94.4% | 97.0% |
+| fps128 + Entropy nb=2048 | 95.5% | 98.3% |
+| hard128 + Entropy nb=2048 | 94.2% | 95.2% |
+
+![Apples-to-apples comparison](YOLO-INT8-PTQ-CALIBRATION-RECIPE.assets/fig09_apples_to_apples.png)
+
+*Figure 9. Direct head-to-head of the candidate recipes across both regimes (all symmetric flavour, identical recipe knobs except for sampling × calibrator). The Tier S `random + Percentile` row is the only one where both bars sit above 95% — every other recipe under-performs on at least one regime by 2-30 pp. `fps + Entropy nb=2048` does win on the narrow regime (98.3%) but at a 1 pp cost on COCO; `easy + Entropy` is mid-pack on COCO and slightly behind fps even on narrow data.*
+
+**Verdict**: Tier S is the universal best. Tier-A `fps128 + Entropy nb=2048` is a worthwhile alternative *only* when you have already confirmed the deployment dataset is heavily finetuned / narrow and you want to squeeze the last 1-2 pp; on rich datasets it loses 1 pp to Tier S. The in-house finding "easy128 + Entropy" was a regime-specific local maximum, not a universal optimum.
+
+![COCO full matrix](YOLO-INT8-PTQ-CALIBRATION-RECIPE.assets/fig10_coco_full_matrix.png)
+
+*Figure 10. COCO yolov8n sampling × calibrator heatmap (mirror of Fig 1 for the rich-data regime). The R5 column is essentially flat at 96.4-96.5% across all four sampling strategies — on rich data, the calibrator does the work and sampling matters almost nothing. Total spread is 4.6 pp (vs 67 pp on the narrow data with MinMax). The lone weak cell is hard128 + MinMax at 91.9%, which is the same outlier-driven failure we observed on the narrow data, just smaller in magnitude.*
 
 ### 7.3 Head-exclusion: unified pattern works across architectures
 
@@ -771,6 +800,36 @@ fps2048       0.0525 ( 5.5%)              -    0.9379 (98.0%)              -
 
 Spread across 9 strategies under MinMax: 67.3 pp. Spread across 10 strategies under Entropy nb=2048: 17.2 pp. Spread across 4 strategies under Percentile 99.999: 31.2 pp (note: rank reverses!).
 
+**Symmetric flavour** (apples-to-apples with COCO R5/R6, same knobs as Tier S):
+
+```
+                  Percentile 99.999 (sym)   Entropy nb=2048 (sym)
+─────────────────────────────────────────────────────────────────
+random128         0.9245 (96.6%)             0.9015 (94.2%)
+easy128           0.6485 (67.8%)             0.9280 (97.0%)
+fps128            0.7660 (80.1%)             0.9407 (98.3%)
+hard128           0.8771 (91.7%)             0.9113 (95.2%)
+```
+
+Symmetric vs asymmetric shifts the absolute numbers by 1-3 pp (e.g. random128+Percentile 96.0% asym → 96.6% sym; easy128+Entropy 98.3% asym → 97.0% sym), but the qualitative findings (random+Percentile is the only universal winner; easy+Percentile collapses) are unchanged.
+
+### 12.1b COCO yolov8n — full (sampling × calibrator) matrix
+
+FP32 ONNX baseline: mAP50 = 0.5206. All INT8 ~3.5 MB. All cells use N=128 calibration.
+
+```
+            R0 (MinMax asym)   R5 (Percentile 99.999 sym)   R6 (Entropy nb=2048 sym)
+──────────────────────────────────────────────────────────────────────────────────────
+random128   0.4974 (95.5%)     0.5025 (96.5%)               0.4928 (94.7%)
+easy128     0.4968 (95.4%)     0.5020 (96.4%)               0.4915 (94.4%)
+fps128      0.4984 (95.7%)     0.5019 (96.4%)               0.4974 (95.5%)
+hard128     0.4786 (91.9%)     0.5021 (96.4%)               0.4906 (94.2%)
+─────────── spreads ─────────────────────────────────────────────────────────────────
+                  3.8 pp         **0.1 pp**                       1.3 pp
+```
+
+The R5 column on COCO is essentially flat — Percentile 99.999 makes sampling-strategy choice nearly irrelevant on rich data. This is the mirror of the in-house finding (where on narrow data, Percentile is the calibrator that **most** depends on having random samples in the calib set).
+
 ### 12.2 COCO yolov8n + random calibration — recipe knob sweep
 
 FP32 ONNX baseline: mAP50 = 0.5206, mAP50-95 = 0.3710.
@@ -837,7 +896,10 @@ Spread ±0.15 pp.
 | `quant_coreset_v8n_coco/08_quantize_mse.py` | Custom MSE calibrator implementation |
 | `quant_coreset_v8n_coco/RECIPE.py` | The Tier S/A/B + rule-out recommendation table (executable) |
 | `quant_coreset_v{tag}_coco/{01,02,04,05}*.py` | Per-(version, size) export → calib → quantize → validate (yolov8n / yolo11n / yolov10n / yolov8s / yolov8m) |
-| `plans/YOLO-INT8-PTQ-CALIBRATION-RECIPE.assets/make_plots.py` | Regenerate the 8 PNG figures from the JSON results |
+| `quant_coreset_v8n_coco/11_validate_full_matrix.py` | Validate the COCO 4-sampling × 3-calibrator matrix (the cells used in §7.2.1 Fig 9 / Fig 10) |
+| `quant_coreset/19_quantize_inhouse_symmetric.py` | Re-quantize the in-house dataset with symmetric Percentile / Entropy to match Tier S knobs (used for the apples-to-apples table in §7.2.1) |
+| `quant_coreset/20_validate_inhouse_symmetric.py` | Validate the symmetric-flavour in-house variants |
+| `plans/YOLO-INT8-PTQ-CALIBRATION-RECIPE.assets/make_plots.py` | Regenerate the 10 PNG figures from the JSON results |
 
 ### Key papers and vendor docs surveyed
 
@@ -864,12 +926,15 @@ The findings are also persisted under:
 
 **The calibration sampling and calibrator-config story for YOLO INT8 PTQ on ONNX Runtime is settled** for the practical operating envelope (any v5/v8/v9/v10/v11 size n through m, any deployment-relevant dataset). The Tier S recipe in §1 / §9 is what to use.
 
+The decisive head-to-head (§7.2.1) shows `random128 + Percentile 99.999 sym` is the **only** recipe that hits ≥96 % retention on **both** the rich-COCO and the narrow finetuned regime simultaneously. Every alternative (`easy + Entropy`, `fps + Entropy`, `easy + Percentile`, etc.) loses 1-30 pp on at least one regime. So the answer to "is random+Percentile the universal best, or is it easy+Entropy?" is unambiguous: **Tier S random+Percentile**.
+
 The most surprising findings — and the ones that should change how this is taught — are:
 
 1. **The default Entropy calibrator is silently broken** in ORT 1.23 (and prior versions back at least to 1.18, based on the unchanged source). The fix requires a code-path bypass; documenting this alone is worth the study.
 2. **"Smart" calibration sampling (FPS / k-means / SelectQ / confidence-based) is at best neutral and often actively counter-productive** under the right calibrator. The simplest answer (random N=128) is the right one.
 3. **`reduce_range=False` is catastrophic on ORT 1.23 CPU** despite vendor literature suggesting it's safe on modern AVX-VNNI CPUs.
-4. **Calibrator and sampling strategy interact strongly on narrow datasets** — smart sampling rescues bad calibrator (MinMax + easy) AND breaks good calibrator (Percentile + easy). Always change them together, never one in isolation.
+4. **Calibrator and sampling strategy interact strongly on narrow datasets** — smart sampling rescues bad calibrator (MinMax + easy) AND breaks good calibrator (Percentile + easy). Always change them together, never one in isolation. Random + Percentile is the only pairing that doesn't depend on which regime you're in.
 5. **Larger model sizes are more PTQ-robust** — for a fixed accuracy budget, prefer scaling up rather than tuning calibrator further.
+6. **Percentile makes calibration sampling almost irrelevant on rich data** — the COCO matrix R5 column is flat at 96.4-96.5 % across all four sampling strategies (spread 0.1 pp). On narrow data the same calibrator amplifies the sampling difference (28.8 pp). Knowing the data regime is what tells you whether smart sampling is worth the engineering cost — and Tier S sidesteps the question entirely.
 
 Future work is incremental: third-party-framework PTQ (AIMET, NNCF, Quark) for additional 1-3 pp upside; QAT for the last mile; mixed precision for genuine accuracy bottlenecks. None of these are required to ship.

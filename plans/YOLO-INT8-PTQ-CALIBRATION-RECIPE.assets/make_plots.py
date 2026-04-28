@@ -65,6 +65,7 @@ def fig1_inhouse_heatmap():
         ('random128', 'MinMax'): 0.6166,
         ('highnorm128', 'MinMax'): 0.5829,
 
+        # Asymmetric flavour from 13_quantize_entropy_real.py (original)
         ('easy128', 'Entropy nb=2048'): 0.9402,
         ('fps128', 'Entropy nb=2048'): 0.9359,
         ('mixed128', 'Entropy nb=2048'): 0.9363,
@@ -75,6 +76,7 @@ def fig1_inhouse_heatmap():
         ('random128', 'Entropy nb=2048'): 0.8842,
         ('highnorm128', 'Entropy nb=2048'): 0.7756,
 
+        # Asymmetric Percentile from 09_quantize_calibrator.py
         ('easy128', 'Percentile 99.999'): 0.7256,
         ('fps128', 'Percentile 99.999'): 0.6460,
         ('hard128', 'Percentile 99.999'): 0.6202,
@@ -523,6 +525,114 @@ def fig8_decision_flow():
     print(f'-> {out.name}')
 
 
+def fig9_apples_to_apples():
+    """Apples-to-apples comparison: same recipes (symmetric Tier S
+    flavour) on both regimes. Settles 'random+Pct vs easy+Entropy'."""
+    REF_COCO = 0.5206
+    REF_NARROW = 0.9568
+    rows = [
+        ('random + Pct 99.999\n(Tier S)',  0.5025, 0.9245, GOLD),
+        ('easy + Pct 99.999',              0.5020, 0.6485, BAD),
+        ('fps + Pct 99.999',               0.5019, 0.7660, BAD),
+        ('hard + Pct 99.999',              0.5021, 0.8771, WARN),
+        ('random + Entropy nb=2048',       0.4928, 0.9015, NEUTRAL),
+        ('easy + Entropy nb=2048',         0.4915, 0.9280, OK),
+        ('fps + Entropy nb=2048',          0.4974, 0.9407, OK),
+        ('hard + Entropy nb=2048',         0.4906, 0.9113, OK),
+    ]
+    fig, ax = plt.subplots(figsize=(11, 5.5))
+    x = np.arange(len(rows))
+    width = 0.36
+    coco_ret = [r[1] / REF_COCO * 100 for r in rows]
+    narrow_ret = [r[2] / REF_NARROW * 100 for r in rows]
+
+    b1 = ax.bar(x - width / 2, coco_ret, width,
+                label='COCO yolov8n (rich data)', color=NEUTRAL,
+                edgecolor='black', linewidth=0.4)
+    b2 = ax.bar(x + width / 2, narrow_ret, width,
+                label='in-house yolo11n 4-class (narrow data)',
+                color=GOLD, edgecolor='black', linewidth=0.4)
+
+    for b, v in zip(b1, coco_ret):
+        ax.text(b.get_x() + b.get_width() / 2, v + 0.6,
+                f'{v:.1f}%', ha='center', fontsize=8.5)
+    for b, v in zip(b2, narrow_ret):
+        ax.text(b.get_x() + b.get_width() / 2, v + 0.6,
+                f'{v:.1f}%', ha='center', fontsize=8.5,
+                color='#7a5a14', fontweight='bold')
+
+    ax.set_xticks(x)
+    ax.set_xticklabels([r[0] for r in rows], fontsize=8.5,
+                        rotation=15, ha='right')
+    ax.set_ylabel('mAP50 retention (% vs FP32 ONNX of the same model)')
+    ax.set_title('Fig 9. Apples-to-apples: random+Percentile vs '
+                 'easy+Entropy across both regimes\n'
+                 '(All recipes use symmetric activations + per-channel + '
+                 'reduce_range=True + tail-60 exclude)',
+                 loc='left')
+    ax.axhline(95, color='gray', linewidth=1, linestyle='--', alpha=0.6)
+    ax.set_ylim(60, 102)
+    ax.legend(loc='lower left')
+    ax.grid(axis='y', alpha=0.3)
+    fig.tight_layout()
+    out = HERE / 'fig09_apples_to_apples.png'
+    fig.savefig(out)
+    plt.close(fig)
+    print(f'-> {out.name}')
+
+
+def fig10_coco_full_matrix():
+    """The COCO 4-sampling × 3-calibrator matrix as a heatmap, mirror of
+    Fig 1 for the rich-data regime."""
+    REF = 0.5206
+    samples = ['random128', 'easy128', 'fps128', 'hard128']
+    cals = ['MinMax (R0 asym)', 'Percentile 99.999\n(R5 sym)',
+            'Entropy nb=2048\n(R6 sym)']
+    data = {
+        ('random128', 'MinMax (R0 asym)'): 0.4974,
+        ('easy128',   'MinMax (R0 asym)'): 0.4968,
+        ('fps128',    'MinMax (R0 asym)'): 0.4984,
+        ('hard128',   'MinMax (R0 asym)'): 0.4786,
+        ('random128', 'Percentile 99.999\n(R5 sym)'): 0.5025,
+        ('easy128',   'Percentile 99.999\n(R5 sym)'): 0.5020,
+        ('fps128',    'Percentile 99.999\n(R5 sym)'): 0.5019,
+        ('hard128',   'Percentile 99.999\n(R5 sym)'): 0.5021,
+        ('random128', 'Entropy nb=2048\n(R6 sym)'):   0.4928,
+        ('easy128',   'Entropy nb=2048\n(R6 sym)'):   0.4915,
+        ('fps128',    'Entropy nb=2048\n(R6 sym)'):   0.4974,
+        ('hard128',   'Entropy nb=2048\n(R6 sym)'):   0.4906,
+    }
+    grid = np.full((len(samples), len(cals)), np.nan)
+    for i, s in enumerate(samples):
+        for j, c in enumerate(cals):
+            grid[i, j] = data[(s, c)] / REF * 100
+
+    fig, ax = plt.subplots(figsize=(7.5, 4.5))
+    im = ax.imshow(grid, aspect='auto', cmap='RdYlGn', vmin=85, vmax=100)
+    ax.set_xticks(range(len(cals)))
+    ax.set_xticklabels(cals, fontsize=9)
+    ax.set_yticks(range(len(samples)))
+    ax.set_yticklabels(samples)
+    ax.set_title('Fig 10. COCO yolov8n — sampling × calibrator matrix\n'
+                 'Spread is much smaller than narrow regime (max 4.6 pp '
+                 'vs 67 pp); R5 column is essentially flat at 96.4-96.5%',
+                 loc='left')
+
+    for i in range(grid.shape[0]):
+        for j in range(grid.shape[1]):
+            v = grid[i, j]
+            col = 'white' if v < 92 else 'black'
+            ax.text(j, i, f'{v:.1f}%', ha='center', va='center',
+                    color=col, fontsize=9.5, fontweight='bold')
+    cbar = plt.colorbar(im, ax=ax, fraction=0.04, pad=0.02)
+    cbar.set_label('mAP50 retention (%)', rotation=270, labelpad=15)
+    fig.tight_layout()
+    out = HERE / 'fig10_coco_full_matrix.png'
+    fig.savefig(out)
+    plt.close(fig)
+    print(f'-> {out.name}')
+
+
 def main():
     fig1_inhouse_heatmap()
     fig2_coco_recipe_sweep()
@@ -532,6 +642,8 @@ def main():
     fig6_entropy_bug()
     fig7_seed_stability()
     fig8_decision_flow()
+    fig9_apples_to_apples()
+    fig10_coco_full_matrix()
     print('all figures generated.')
 
 
