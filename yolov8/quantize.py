@@ -65,6 +65,7 @@ import numpy as np
 import onnx
 import yaml
 from ditk import logging
+from hbutils.encoding import sha3
 from ultralytics import YOLO, RTDETR
 
 from .onnx import export_yolo_to_onnx
@@ -279,6 +280,36 @@ def _read_metadata_props(onnx_path: Path) -> dict[str, str]:
     """Read ``metadata_props`` from an ONNX file as a plain dict."""
     proto = onnx.load(str(onnx_path))
     return {p.key: p.value for p in proto.metadata_props}
+
+
+#: Keys in :func:`quantize_workdir`'s ``quant_args.json`` that hold
+#: local filesystem paths. The local sidecar keeps the originals (it
+#: is debugging / re-quant friendly), but :func:`anonymize_quant_args`
+#: replaces them with sha3-224 hashes before publishing — same
+#: convention :mod:`yolov8.export` uses for ``train_args.{data,
+#: project, model}`` on the bundled ``best.pt``.
+_PATH_FIELDS_IN_QUANT_ARGS = ('fp32_source', 'data_yaml', 'train_images_dir')
+
+
+def anonymize_quant_args(args: dict) -> dict:
+    """Return a copy of ``args`` safe to publish: every key in
+    :data:`_PATH_FIELDS_IN_QUANT_ARGS` is replaced with a
+    ``<key>_sha3_224`` hash entry. Non-path keys pass through.
+
+    Hash-equality across runs still tells you "same dataset" / "same
+    checkpoint" — useful for the receiver — but the underlying string
+    is not recoverable.
+
+    :param args: Parsed ``quant_args.json`` dict.
+    :returns: New dict; ``args`` is not mutated.
+    """
+    out = {}
+    for k, v in args.items():
+        if k in _PATH_FIELDS_IN_QUANT_ARGS and isinstance(v, str) and v:
+            out[f'{k}_sha3_224'] = sha3(v.encode(), n=224)
+        else:
+            out[k] = v
+    return out
 
 
 def _read_names_for_threshold(best_pt: Path, workdir: Path) -> dict:
@@ -669,6 +700,13 @@ def quantize_workdir(
                     json.dump(threshold_payload, f, ensure_ascii=False, indent=4)
 
     # ---- 6. write recipe-config sidecar ----
+    # The local sidecar carries the original paths (useful for the
+    # operator's own debugging / re-quantisation). When the bundle is
+    # exported / published, :func:`yolov8.export.export_model_from_workdir`
+    # passes the JSON through :func:`anonymize_quant_args` so the
+    # published file has sha3-224 hashes instead — matching the
+    # ``train_args`` anonymisation already applied to the bundled
+    # ``best.pt``.
     quant_args = {
         **TIER_S,
         'calib_n': calib_n,

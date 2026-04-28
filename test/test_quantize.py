@@ -30,7 +30,9 @@ from yolov8.quantize import (
     HEAD_TAIL_K,
     QuantizationConfigError,
     TIER_S,
+    _PATH_FIELDS_IN_QUANT_ARGS,
     _read_names_for_threshold,
+    anonymize_quant_args,
     cli as quantize_cli,
     collect_head_excludes,
     quantize_workdir,
@@ -196,6 +198,82 @@ class TestConfigErrors:
         # message is acceptable; both are config-error states.
         msg = str(excinfo.value)
         assert ('args.yaml' in msg) or ('not found' in msg)
+
+
+# ---------------------------------------------------------------------------
+# Path anonymization for the published quant_args.json
+# ---------------------------------------------------------------------------
+
+@pytest.mark.unittest
+class TestAnonymizeQuantArgs:
+    """The local <workdir>/quant/quant_args.json carries the trainer's
+    real filesystem paths (useful for re-quantization). The HF-bound
+    copy must NOT — it goes through anonymize_quant_args() and the
+    three path keys become sha3-224 hashes, matching the convention
+    yolov8.export already applies to train_args on best.pt."""
+
+    def test_path_fields_get_hashed(self):
+        local = {
+            'recipe_name': 'TierS-Percentile99999-sym',
+            'calib_n': 128,
+            'fp32_source': '/data/runs/x/weights/best.pt',
+            'data_yaml': '/home/u/datasets/x/data.yaml',
+            'train_images_dir': '/nfs/x/train/images',
+        }
+        pub = anonymize_quant_args(local)
+        # original keys are gone
+        for k in _PATH_FIELDS_IN_QUANT_ARGS:
+            assert k not in pub
+        # sha3 keys are present and 56 hex chars (sha3-224 = 28 bytes)
+        for k in _PATH_FIELDS_IN_QUANT_ARGS:
+            h = pub[f'{k}_sha3_224']
+            assert isinstance(h, str)
+            assert len(h) == 56
+            int(h, 16)  # raises if not valid hex
+        # non-path keys pass through unchanged
+        assert pub['recipe_name'] == 'TierS-Percentile99999-sym'
+        assert pub['calib_n'] == 128
+
+    def test_does_not_mutate_input(self):
+        local = {
+            'fp32_source': '/x/best.pt',
+            'data_yaml': '/y.yaml',
+            'train_images_dir': '/z/imgs',
+            'recipe_name': 'r',
+        }
+        snapshot = dict(local)
+        _ = anonymize_quant_args(local)
+        assert local == snapshot
+
+    def test_no_local_path_fragments_leak(self):
+        """The anonymised dict must not contain any obvious local-path
+        substring — guard against future regressions."""
+        local = {
+            'fp32_source': '/data/some/secret/best.pt',
+            'data_yaml': '/home/me/datasets/x.yaml',
+            'train_images_dir': '/nfs/share/train',
+            'calib_n': 128,
+        }
+        pub_text = json.dumps(anonymize_quant_args(local))
+        for leak in ('/data/', '/home/', '/nfs/', 'best.pt',
+                     'datasets', 'secret', '/share/'):
+            assert leak not in pub_text, f'leak: {leak!r} in published JSON'
+
+    def test_missing_path_keys_pass_through(self):
+        # A future quant_args.json that simply doesn't have the path
+        # fields (e.g. from a stripped-down config) shouldn't crash.
+        local = {'recipe_name': 'r', 'calib_n': 128}
+        out = anonymize_quant_args(local)
+        assert out == local
+
+    def test_empty_path_string_passed_through(self):
+        # Defensive: empty string is not anonymised (no info to hide)
+        # but also doesn't crash sha3.
+        local = {'fp32_source': '', 'recipe_name': 'r'}
+        out = anonymize_quant_args(local)
+        # Either kept as-is OR removed; we just don't want a crash.
+        # Currently we keep it as-is (truthy check inside helper).
+        assert 'fp32_source_sha3_224' not in out
 
 
 # ---------------------------------------------------------------------------

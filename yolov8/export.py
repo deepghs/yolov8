@@ -221,8 +221,17 @@ def export_model_from_workdir(workdir, export_dir, name: Optional[str] = None,
             files.append((thr_exp, 'threshold_int8.json'))
         qa_src = os.path.join(quant_dir, 'quant_args.json')
         if os.path.isfile(qa_src):
+            # Local quant_args.json keeps the original paths for the
+            # operator's debugging convenience; the published copy goes
+            # through anonymize_quant_args so we don't leak the
+            # trainer's filesystem layout via the HF artifact.
+            from .quantize import anonymize_quant_args  # noqa: PLC0415
+            with open(qa_src, 'r', encoding='utf-8') as f:
+                qa_local = json.load(f)
+            qa_pub = anonymize_quant_args(qa_local)
             qa_exp = os.path.join(export_dir, f'{name}_quant_args.json')
-            shutil.copy(qa_src, qa_exp)
+            with open(qa_exp, 'w', encoding='utf-8') as f:
+                json.dump(qa_pub, f, ensure_ascii=False, indent=4)
             files.append((qa_exp, 'quant_args.json'))
 
     for f in _KNOWN_FILES:
