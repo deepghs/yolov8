@@ -44,7 +44,8 @@ _LOG_FILE_PATTERN = re.compile(r'^events\.out\.tfevents\.(?P<timestamp>\d+)\.(?P
 def export_model_from_workdir(workdir, export_dir, name: Optional[str] = None,
                               opset_version: int = 14, logfile_anonymous: bool = True,
                               with_embedding: bool = False,
-                              embedding_layer_indices: Optional[list] = None
+                              embedding_layer_indices: Optional[list] = None,
+                              with_int8: bool = False,
                               ) -> List[Tuple[str, str]]:
     """Materialise an upload-ready bundle from a finished training workdir.
 
@@ -85,6 +86,15 @@ def export_model_from_workdir(workdir, export_dir, name: Optional[str] = None,
         ``with_embedding`` is ``True``. ``None`` defaults to
         Ultralytics' second-to-last layer.
     :type embedding_layer_indices: list[int] or None
+    :param with_int8: When ``True``, also include the deployable INT8
+        ONNX produced by :func:`yolov8.quantize.quantize_workdir`. If
+        ``<workdir>/quant/int8/`` does not yet contain a quantized
+        artifact, runs the Tier S PTQ pipeline first; otherwise
+        simply ships the existing artifact and its sidecar
+        ``eval.json`` / ``threshold.json``. The published files end
+        up at ``model.int8.onnx`` / ``eval_int8.json`` /
+        ``threshold_int8.json`` inside the upload bundle.
+    :type with_int8: bool
     :returns: Manifest as a list of ``(local_path, repo_path)``
         tuples, in upload order.
     :rtype: list[tuple[str, str]]
@@ -170,6 +180,51 @@ def export_model_from_workdir(workdir, export_dir, name: Optional[str] = None,
         )
         files.append((embed_onnx_exp, 'model_with_embedding.onnx'))
 
+    if with_int8:
+        # Optional deployable INT8 artifact produced by Tier S PTQ.
+        # The quantize pipeline lives separately in :mod:`yolov8.quantize`
+        # to keep the import surface lean (it pulls onnxruntime + opencv).
+        # Imported lazily so an ``export -w ...`` without ``--with-int8``
+        # remains usable even if those deps aren't installed.
+        from .quantize import quantize_workdir  # noqa: PLC0415
+
+        quant_dir = os.path.join(workdir, 'quant')
+        int8_dir = os.path.join(quant_dir, 'int8')
+        existing = (
+            sorted(glob.glob(os.path.join(int8_dir, '*_int8.onnx')))
+            if os.path.isdir(int8_dir) else []
+        )
+        if existing:
+            int8_src = existing[0]
+            logging.info(f'Reusing existing INT8 ONNX: {int8_src!r}')
+        else:
+            logging.info('No INT8 ONNX in workdir; running Tier S PTQ now.')
+            int8_src = str(quantize_workdir(workdir))
+
+        int8_exp = os.path.join(export_dir, f'{name}_model.int8.onnx')
+        shutil.copy(int8_src, int8_exp)
+        files.append((int8_exp, 'model.int8.onnx'))
+
+        # Ship the INT8-specific eval + threshold sidecars too. The
+        # threshold is also inside the .onnx metadata_props, but the
+        # JSON sidecar is what aggregator tools (e.g. yolov8.list)
+        # currently read — keep both paths working.
+        eval_src = os.path.join(quant_dir, 'eval.json')
+        if os.path.isfile(eval_src):
+            eval_exp = os.path.join(export_dir, f'{name}_eval_int8.json')
+            shutil.copy(eval_src, eval_exp)
+            files.append((eval_exp, 'eval_int8.json'))
+        thr_src = os.path.join(quant_dir, 'threshold.json')
+        if os.path.isfile(thr_src):
+            thr_exp = os.path.join(export_dir, f'{name}_threshold_int8.json')
+            shutil.copy(thr_src, thr_exp)
+            files.append((thr_exp, 'threshold_int8.json'))
+        qa_src = os.path.join(quant_dir, 'quant_args.json')
+        if os.path.isfile(qa_src):
+            qa_exp = os.path.join(export_dir, f'{name}_quant_args.json')
+            shutil.copy(qa_src, qa_exp)
+            files.append((qa_exp, 'quant_args.json'))
+
     for f in _KNOWN_FILES:
         src = os.path.join(workdir, f)
         if os.path.exists(src):
@@ -213,8 +268,13 @@ print_version = partial(_origin_print_version, 'export')
               help='Also export a second ONNX (model_with_embedding.onnx) '
                    'whose graph emits the predictions plus a pooled image '
                    'embedding suitable for retrieval / dedup / FAISS.')
+@click.option('--with-int8/--no-int8', 'with_int8', default=False,
+              show_default=True,
+              help='Also pack the deployable INT8 ONNX (Tier S PTQ). '
+                   'Reuses <workdir>/quant/ if already populated; '
+                   'otherwise runs the quantization pipeline first.')
 def cli(workdir: str, name: Optional[str], opset_version: int = 14,
-        with_embedding: bool = False):
+        with_embedding: bool = False, with_int8: bool = False):
     """Click entry point: stage a workdir into ``<workdir>/export/`` and zip it.
 
     Calls :func:`export_model_from_workdir` and packs every produced
@@ -233,18 +293,26 @@ def cli(workdir: str, name: Optional[str], opset_version: int = 14,
     :param with_embedding: Also stage ``model_with_embedding.onnx``
         with an ``embedding`` output for retrieval / dedup / FAISS.
     :type with_embedding: bool
+    :param with_int8: Also stage the deployable INT8 ONNX
+        (``model.int8.onnx``) and its sidecars (``eval_int8.json`` /
+        ``threshold_int8.json`` / ``quant_args.json``). Reuses an
+        existing ``<workdir>/quant/int8/*_int8.onnx`` if present;
+        otherwise invokes :func:`yolov8.quantize.quantize_workdir`
+        with default Tier S knobs.
+    :type with_int8: bool
 
     Example::
 
         >>> # CLI form (preferred):
-        >>> #   python -m yolov8.export -w runs/some_train --with-embedding
+        >>> #   python -m yolov8.export -w runs/some_train --with-embedding --with-int8
         >>> from yolov8.export import cli  # click callback
     """
     logging.try_init_root(logging.INFO)
     export_dir = os.path.join(workdir, 'export')
     files = export_model_from_workdir(workdir, export_dir, name,
                                        opset_version=opset_version,
-                                       with_embedding=with_embedding)
+                                       with_embedding=with_embedding,
+                                       with_int8=with_int8)
 
     zip_file = os.path.join(export_dir, f'{name}.zip')
     logging.info(f'Packing all the above file to archive {zip_file!r}')

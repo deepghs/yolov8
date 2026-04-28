@@ -42,6 +42,14 @@ def cli():
                    '"embedding" output for retrieval / dedup / FAISS use; '
                    'consumers that only need the detection head can keep '
                    'using model.onnx (output names are unchanged).')
+@click.option('--with-int8/--no-int8', 'with_int8', default=False,
+              show_default=True,
+              help='Also publish the deployable INT8 ONNX produced by '
+                   'yolov8.quantize.quantize_workdir (Tier S PTQ). The '
+                   'published artifact set then includes model.int8.onnx + '
+                   'eval_int8.json + threshold_int8.json + quant_args.json. '
+                   'Reuses <workdir>/quant/ if already populated; otherwise '
+                   'runs the quantization pipeline first.')
 @click.option('--dry-run', 'dry_run', is_flag=True, default=False,
               help='Run the export pipeline and report the upload manifest, '
                    'but do not create the HF repo or commit. HF_TOKEN is not '
@@ -49,6 +57,7 @@ def cli():
 def huggingface(workdir: str, name: Optional[str],
                 repository: str, revision: str, opset_version: int = 14,
                 with_embedding: bool = False,
+                with_int8: bool = False,
                 dry_run: bool = False):
     """Bundle a workdir's best checkpoint and upload it to a HF model repo.
 
@@ -74,6 +83,12 @@ def huggingface(workdir: str, name: Optional[str],
     :param with_embedding: Also publish a dual-head ONNX with an
         ``embedding`` output for retrieval / dedup / FAISS.
     :type with_embedding: bool
+    :param with_int8: Also publish the Tier S INT8 ONNX
+        (``model.int8.onnx``) plus ``eval_int8.json`` /
+        ``threshold_int8.json`` / ``quant_args.json`` sidecars.
+        Calls into :func:`yolov8.quantize.quantize_workdir` if
+        ``<workdir>/quant/`` is empty.
+    :type with_int8: bool
     :param dry_run: Report the upload manifest but skip repo
         creation and the actual commit. ``HF_TOKEN`` is not needed
         in this mode.
@@ -105,7 +120,8 @@ def huggingface(workdir: str, name: Optional[str],
         # file - export_model_from_workdir handles that.
         files = export_model_from_workdir(workdir, td, name,
                                            opset_version=opset_version,
-                                           with_embedding=with_embedding)
+                                           with_embedding=with_embedding,
+                                           with_int8=with_int8)
 
         if dry_run:
             total = 0

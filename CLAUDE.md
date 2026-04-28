@@ -53,6 +53,8 @@
     ├── export.py              exports best.pt + ONNX + curves/csv from a workdir, with anonymisation
     ├── publish.py             `python -m yolov8.publish {huggingface,roboflow}` CLI
     ├── list.py                `python -m yolov8.list` scans an HF repo and writes a README table
+    ├── quantize.py            INT8 PTQ for trained workdirs — Tier S recipe baked in;
+    │                          `python -m yolov8.quantize -w runs/<task>` CLI; see §1.10
     ├── onnx.py                ONNX export (YOLO/RTDETR); also dual-head
     │                          (predictions + embedding) export — see §1.7
     ├── embed.py               universal image-embedding extractor for any
@@ -347,6 +349,101 @@ Hard rules:
 When you add or refactor a function under `yolov8/`, fix its docstring
 to match this convention in the same patch — don't ship a public API
 without one.
+
+### 1.10 INT8 post-training quantization
+
+`yolov8/quantize.py` implements one fixed recipe — the **Tier S**
+configuration empirically derived in
+`plans/YOLO-INT8-PTQ-CALIBRATION-RECIPE.md`. It runs end-to-end from
+a trained workdir to a deployable INT8 ONNX:
+
+```
+python -m yolov8.quantize -w runs/<task>
+```
+
+Pipeline (all artifacts under `<workdir>/quant/`):
+
+1. Read `args.yaml`, resolve `data:` to a yaml; resolve the `train:`
+   split via `ultralytics.data.utils.check_det_dataset` so we accept
+   the same yaml dialects ult does. Either field can be overridden
+   with `--data` / `--train-images`. Missing config raises
+   `QuantizationConfigError`.
+2. Sample N=128 random images from train (deterministic via
+   `random.Random(seed)`); writes the calib list to
+   `quant/calib_lists/random128_seed0.txt`.
+3. Export FP32 ONNX (via `yolov8.onnx.export_yolo_to_onnx`, which
+   already attaches the standard `metadata_props` + `dghs.yolov8.*`
+   namespace). The FP32 onnx is kept under `quant/onnx/` so
+   re-quantizing without re-exporting is cheap.
+4. `quant_pre_process` with a `skip_symbolic_shape=True` fallback for
+   v10 / v12 NMS-free models whose TopK trips ORT's symbolic shape
+   inferencer.
+5. `quantize_static` with the Tier S knobs:
+   `Percentile 99.999 + symmetric + per-channel + reduce_range=True
+   + QDQ + tail-60 head exclude` (the head exclude is a unified set
+   covering v8/v9/v10/v11 — see §1.10 below). Writes
+   `quant/int8/<name>_imgsz<sz>_int8.onnx`.
+6. `model.val(...)` on the INT8 ONNX with `device='cpu', batch=1`,
+   produces `quant/eval.json` with mAP50 / mAP50-95 / P / R / speed.
+7. Recompute the F1-vs-confidence threshold from the freshly
+   populated `model.metrics` via
+   `yolov8.utils.threshold._payload_from_metrics` directly. **Do NOT
+   call `yolov8.utils.compute_threshold_data` here** — that helper
+   reads `model.names`, which on the YOLO wrapper triggers a lazy
+   predictor setup that calls `select_device(...)` and crashes on
+   hosts where CUDA enumeration is misconfigured. The lower-level
+   `_payload_from_metrics` accepts a `names=` kwarg, which we resolve
+   from `<workdir>/labels.json` or the trained `.pt`'s inner
+   `BaseModel.names` (never via the `YOLO.names` property).
+8. Attach metadata to the INT8 ONNX: starts from the FP32 ONNX's
+   `metadata_props` (so all standard ult / dghs keys are preserved)
+   and adds a `dghs.yolov8.quant.*` namespace recording
+   `recipe / calibrator / calib_percentile / symmetric /
+   per_channel / reduce_range / quant_format / calib_method /
+   calib_n / calib_seed / head_tail_k / head_exclude_count / eval`.
+   The INT8-specific threshold supersedes the FP32 one in
+   `dghs.yolov8.threshold`. The deployable `.onnx` is fully
+   self-describing.
+9. Sidecar JSONs: `quant/eval.json`, `quant/threshold.json` (INT8-
+   specific), `quant/quant_args.json` (recipe knobs).
+
+**Reuse semantics**: re-running `quantize_workdir` on a workdir
+whose `quant/int8/` already has an INT8 ONNX skips calibration —
+quantization takes 3-10 min (the long pole) and the user almost
+always wants to keep the existing artifact. The post-quant val pass
+also reuses `eval.json` / `threshold.json` if both already exist.
+`--force` (CLI) / `force=True` (Python) bypasses both reuse paths
+for the rare "I changed the recipe / dataset" case.
+
+**Head exclude pattern is intentionally one fixed set** for all
+YOLO versions (`HEAD_TAIL_K=60` window over the trailing nodes
+filtered by `HEAD_EXCLUDE_OPS`). The set covers both v8/v11's
+standard tail (`Sigmoid / Softmax / Concat / Split / Reshape /
+Transpose / Sub / Add / Div / Mul`) and v10's NMS-free postproc
+(`TopK / GatherElements / GatherND / ReduceMax / Tile / Unsqueeze /
+Sign / Equal / Not / Mod / Cast / And`). Verified harmless on v8/v11
+(within seed-noise of the original tail-24 exclude); essential on
+v10 (without the extra ops INT8 mAP collapses to 0%). See
+`plans/YOLO-INT8-PTQ-CALIBRATION-RECIPE.md` §7.3 for the empirical
+basis.
+
+**Integration with `export.py` / `publish.py`**: both grew a
+`--with-int8` flag that:
+
+- Reuses `<workdir>/quant/int8/*_int8.onnx` if present (calibration
+  is too expensive to redo silently).
+- Otherwise calls `quantize_workdir(workdir)` with default Tier S
+  knobs — same end state as the user having run
+  `python -m yolov8.quantize -w <workdir>` first.
+- Adds the INT8 artifact and sidecars to the export manifest as:
+  `model.int8.onnx`, `eval_int8.json`, `threshold_int8.json`,
+  `quant_args.json`. These ride next to `model.pt` / `model.onnx` /
+  `threshold.json` in the published bundle on HF.
+
+The user-facing override that cycles a fresh quantization is
+`python -m yolov8.quantize -w <workdir> --force` followed by a plain
+`publish --with-int8` — splitting these two responsibilities keeps
+the publish step deterministic.
 
 ---
 
